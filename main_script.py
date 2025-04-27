@@ -5,13 +5,15 @@ Created on Sun Apr 13 16:01:34 2025
 
 @author: lenti
 """
-
+#### Import functions related to plotting, numerical calculations and data reading/writing
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from astropy.io import fits
 import os
 
+
+#### Import fitting functions
 from iminuit import Minuit
 from iminuit.cost import LeastSquares
 from scipy.stats import chi2
@@ -20,12 +22,18 @@ from scipy.stats import chi2
 from helper_functions import find_decimal_point
 from compoM_functions import smc, lmc, mw
 
+#### Import classification functions
+from NutMaat.classifier import Classifier
+
+
+### Import utilities
 from tqdm import tqdm
 
 class SNAQS_object():
     
     def __init__(self, path, filename):
         self.filename = filename
+        self.name = filename[:-5]
         self.hdu = fits.open(path + filename)
         self.flux = self.hdu[1].data["flux"]
         self.wave = 10**(self.hdu[1].data["loglam"])
@@ -181,15 +189,35 @@ class SNAQS():
             if save_plots==True:
                 self.objects[i].plot_compoM(param_type="MW")
                 
-    def run_xpca_classification(self):
+    def xpca_classification(self):
         for i in tqdm(self.SNAQS_list):
             try:
                 os.system("python -m xpca {} -s sdss -o {}temp".format(self.path + i, self.path))
+                hdu = fits.open("{}temp".format(self.path))
+                self.objects[i].xpca = {"zBest": hdu[1].data["zBest"], "zBestErr": hdu[1].data["zBestErr"], "zBestChi2": hdu[1].data["zBestChi2"], "zBestType": hdu[1].data["zBestType"], "zBestSubType": hdu[1].data["zBestSubType"]}
+                os.system("rm {}temp".format(self.path))
             except:
-                raise Exception("FAILED - Either the XPCA software is not installed, or there is a bug in the software preventing a classification.")
-            hdu = fits.open("{}temp".format(self.path))
-            self.objects[i].xpca = {"zBest": hdu[1].data["zBest"], "zBestErr": hdu[1].data["zBestErr"], "zBestChi2": hdu[1].data["zBestChi2"], "zBestType": hdu[1].data["zBestType"], "zBestSubType": hdu[1].data["zBestSubType"]}
-            os.system("rm {}temp".format(self.path))
+                print("FAILED - Classification of object {} failed either due to XPCA software or due to the FITS file itself - setting output to NaN".format(i))
+                self.objects[i].xpca = {"zBest": np.nan, "zBestErr": np.nan, "zBestChi2": np.nan, "zBestType": np.nan, "zBestSubType": np.nan}
+    
+    def stellar_classification(self):
+        clf = Classifier(out_file='output')
+        for i in tqdm(self.SNAQS_list):
+            try:
+                df = pd.Series({
+                    'name': self.objects[i].name,
+                    'wave': self.objects[i].wave,
+                    'flux': self.objects[i].flux
+                })
+            
+                # applying classification method
+                result = clf.classify_spectrum(2, 3, from_df=True, df=df, cols=df.index.tolist())
+                
+                self.objects[i].nutmaat = {"SPT": result.SPT[0], "LUM": result.LUM[0], "Quality": result.quality[0][3:7], "Chi2": result.chi2[0]}
+            except:
+                print("FAILED - Classification of object {} failed either due to NutMaat package or due to the FITS file itself - setting output to NaN".format(i))
+                self.objects[i].nutmaat = {"SPT": np.nan, "LUM": np.nan, "Quality": np.nan, "Chi2": np.nan}
+            
                     
         
                 
