@@ -12,6 +12,9 @@ import matplotlib.pyplot as plt
 from astropy.io import fits
 import os
 
+from astropy.table.table_helpers import simple_table
+from astropy.table import Table
+
 
 #### Import fitting functions
 from iminuit import Minuit
@@ -34,12 +37,21 @@ class SNAQS_object():
     def __init__(self, path, filename):
         self.filename = filename
         self.name = filename[:-5]
-        self.hdu = fits.open(path + filename)
-        self.flux = self.hdu[1].data["flux"]
-        self.wave = 10**(self.hdu[1].data["loglam"])
-        self.error = 1/self.hdu[1].data["ivar"]**0.5
-        self.RA = self.hdu[0].header["RA"]
-        self.DEC = self.hdu[0].header["DEC"]
+        if self.filename[-4:]=="fits":
+            self.hdu = fits.open(path + filename)
+            self.flux = self.hdu[1].data["flux"]
+            self.wave = 10**(self.hdu[1].data["loglam"])
+            self.error = 1/self.hdu[1].data["ivar"]**0.5
+            self.RA = self.hdu[0].header["RA"]
+            self.DEC = self.hdu[0].header["DEC"]
+        elif self.filename[-3:]=="dat":
+            data = pd.read_csv(path + filename, sep="\s+")
+            self.data = data[data["calibrated_flux"].notna()]
+            self.flux = self.data["calibrated_flux"].values*10**17
+            self.wave = self.data["wavelength"].values
+            self.error = ((self.data["flux_var"].values)**0.5*10**17)
+            self.RA = None
+            self.DEC = None
         
         try:
             self.z_header = self.hdu[2].data["Z"][0]
@@ -110,6 +122,8 @@ class SNAQS():
                         self.SNAQS_list.append(i)
                 except:
                     print("WARNING: " + "File " + i + " not included due to missing RA and/or DEC.")
+            elif i[0]!="." and i[-3:]=="dat":
+                self.SNAQS_list.append(i)
     
         self.objects = {}
         for i in self.SNAQS_list:
@@ -191,11 +205,19 @@ class SNAQS():
                 
     def xpca_classification(self):
         for i in tqdm(self.SNAQS_list):
+            if i[-3:]=="dat":
+                #temp_data = {"flux": self.objects[i].flux.tolist(), "wave": self.objects[i].wave.tolist(), "error": self.objects[i].error.tolist()}
+                self.objects[i].data.to_csv("temp_data.csv")
             try:
-                os.system("python -m xpca {} -s sdss -o {}temp".format(self.path + i, self.path))
+                if i[-3:]=="dat":
+                    os.system("python -m xpca {} --source csv -o {}temp".format("temp_data.csv", self.path))
+                else:
+                    os.system("python -m xpca {} -s sdss -o {}temp".format(self.path + i, self.path))
                 hdu = fits.open("{}temp".format(self.path))
                 self.objects[i].xpca = {"zBest": hdu[1].data["zBest"], "zBestErr": hdu[1].data["zBestErr"], "zBestChi2": hdu[1].data["zBestChi2"], "zBestType": hdu[1].data["zBestType"], "zBestSubType": hdu[1].data["zBestSubType"]}
                 os.system("rm {}temp".format(self.path))
+                if i[-3:]=="dat":
+                    os.system("rm temp_data.csv")
             except:
                 print("FAILED - Classification of object {} failed either due to XPCA software or due to the FITS file itself - setting output to NaN".format(i))
                 self.objects[i].xpca = {"zBest": np.nan, "zBestErr": np.nan, "zBestChi2": np.nan, "zBestType": np.nan, "zBestSubType": np.nan}
