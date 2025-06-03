@@ -12,8 +12,8 @@ import matplotlib.pyplot as plt
 from astropy.io import fits
 import os
 
-from astropy.table.table_helpers import simple_table
-from astropy.table import Table
+#from astropy.table.table_helpers import simple_table
+#from astropy.table import Table
 
 
 #### Import fitting functions
@@ -26,11 +26,12 @@ from helper_functions import find_decimal_point
 from compoM_functions import smc, lmc, mw
 
 #### Import classification functions
-from NutMaat.classifier import Classifier
+#from NutMaat.classifier import Classifier
 
 
 ### Import utilities
 from tqdm import tqdm
+from spectres import spectres
 
 class SNAQS_object():
     
@@ -46,7 +47,7 @@ class SNAQS_object():
             self.DEC = self.hdu[0].header["DEC"]
         elif self.filename[-3:]=="dat":
             data = pd.read_csv(path + filename, sep="\s+")
-            self.data = data[data["calibrated_flux"].notna()]
+            self.data = data[data["calibrated_flux"].notna() & (data["calibrated_flux"]>10**(-20)) & (data["calibrated_flux"]<10**(-15))]
             self.flux = self.data["calibrated_flux"].values*10**17
             self.wave = self.data["wavelength"].values
             self.error = ((self.data["flux_var"].values)**0.5*10**17)
