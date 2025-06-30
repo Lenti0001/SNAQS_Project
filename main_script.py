@@ -199,10 +199,17 @@ class SNAQS():
         for i in self.SNAQS_list:
             self.objects[i] = SNAQS_object(self.path, i)
             
-    def fit_compoM_SMC(self, save_plots=True):
+    def fit_compoM(self, save_plots=True, param="SMC"):
         '''Fits the loaded spectra with the SMC parameters. New atributes are then added to the SNAQS objects related to the fitting when done.'''
         for i in tqdm(self.SNAQS_list):
-            least_squares = LeastSquares(self.objects[i].wave, self.objects[i].flux, self.objects[i].error, smc)
+            if param=="SMC":
+                least_squares = LeastSquares(self.objects[i].wave, self.objects[i].flux, self.objects[i].error, smc)
+            elif param=="LMC":
+                least_squares = LeastSquares(self.objects[i].wave, self.objects[i].flux, self.objects[i].error, lmc)
+            elif param=="MW":
+                least_squares = LeastSquares(self.objects[i].wave, self.objects[i].flux, self.objects[i].error, mw)
+            else:
+                print("Incorrect parameter set specified! Choose between SMC, LMC or MW (as string).")
             
             if self.objects[i].z_header!=None:
                 m = Minuit(least_squares, z=self.objects[i].z_header, AB=0.45, normalisation=1.5*np.median(self.objects[i].flux))
@@ -218,60 +225,15 @@ class SNAQS():
                 m.hesse()
             
             ### Create new attributes related to the fitting procedure:
-            self.objects[i].compoM_SMC = {"z": m.values["z"], "z_std": m.errors["z"], "AB": m.values["AB"], "AB_std": m.errors["AB"], "chi2": m.fval, "red_chi2": m.fval/m.ndof, "ndof": m.ndof, "p_val": chi2.sf(m.fval, m.ndof), "norm": m.values["normalisation"], "norm_std": m.errors["normalisation"]}
-            
+            if param=="SMC":
+                self.objects[i].compoM_SMC = {"z": m.values["z"], "z_std": m.errors["z"], "AB": m.values["AB"], "AB_std": m.errors["AB"], "chi2": m.fval, "red_chi2": m.fval/m.ndof, "ndof": m.ndof, "p_val": chi2.sf(m.fval, m.ndof), "norm": m.values["normalisation"], "norm_std": m.errors["normalisation"]}
+            elif param=="LMC":
+                self.objects[i].compoM_LMC = {"z": m.values["z"], "z_std": m.errors["z"], "AB": m.values["AB"], "AB_std": m.errors["AB"], "chi2": m.fval, "red_chi2": m.fval/m.ndof, "ndof": m.ndof, "p_val": chi2.sf(m.fval, m.ndof), "norm": m.values["normalisation"], "norm_std": m.errors["normalisation"]}
+            elif param=="MW":
+                self.objects[i].compoM_MW = {"z": m.values["z"], "z_std": m.errors["z"], "AB": m.values["AB"], "AB_std": m.errors["AB"], "chi2": m.fval, "red_chi2": m.fval/m.ndof, "ndof": m.ndof, "p_val": chi2.sf(m.fval, m.ndof), "norm": m.values["normalisation"], "norm_std": m.errors["normalisation"]}
+                
             if save_plots==True:
-                self.objects[i].plot_compoM(param_type="SMC")
-            
-    
-    def fit_compoM_LMC(self, save_plots=True):
-        '''Fits the loaded spectra with the SMC parameters. New atributes are then added to the SNAQS objects related to the fitting when done.'''
-        for i in tqdm(self.SNAQS_list):
-            least_squares = LeastSquares(self.objects[i].wave, self.objects[i].flux, self.objects[i].error, lmc)
-            
-            if self.objects[i].z_header!=None:
-                m = Minuit(least_squares, z=self.objects[i].z_header, AB=0.45, normalisation=1.5*np.median(self.objects[i].flux))
-                m.limits["z"] = (0, 10)
-                m.limits["AB"] = (0, 10)
-                m.migrad()
-                m.hesse()
-            else:
-                m = Minuit(least_squares, z=1, AB=0.45, normalisation=1.5*np.median(self.objects[i].flux))
-                m.limits["z"] = (0, 10)
-                m.limits["AB"] = (0, 10)
-                m.migrad()
-                m.hesse()
-            
-            ### Create new attributes related to the fitting procedure:
-            self.objects[i].compoM_LMC = {"z": m.values["z"], "z_std": m.errors["z"], "AB": m.values["AB"], "AB_std": m.errors["AB"], "chi2": m.fval, "red_chi2": m.fval/m.ndof, "ndof": m.ndof, "p_val": chi2.sf(m.fval, m.ndof), "norm": m.values["normalisation"], "norm_std": m.errors["normalisation"]}
-            
-            if save_plots==True:
-                self.objects[i].plot_compoM(param_type="LMC")
-            
-    
-    def fit_compoM_MW(self, save_plots=True):
-        '''Fits the loaded spectra with the SMC parameters. New atributes are then added to the SNAQS objects related to the fitting when done.'''
-        for i in tqdm(self.SNAQS_list):
-            least_squares = LeastSquares(self.objects[i].wave, self.objects[i].flux, self.objects[i].error, mw)
-            
-            if self.objects[i].z_header!=None:
-                m = Minuit(least_squares, z=self.objects[i].z_header, AB=0.45, normalisation=1.5*np.median(self.objects[i].flux))
-                m.limits["z"] = (0, 10)
-                m.limits["AB"] = (0, 10)
-                m.migrad()
-                m.hesse()
-            else:
-                m = Minuit(least_squares, z=1, AB=0.45, normalisation=1.5*np.median(self.objects[i].flux))
-                m.limits["z"] = (0, 10)
-                m.limits["AB"] = (0, 10)
-                m.migrad()
-                m.hesse()
-            
-            ### Create new attributes related to the fitting procedure:
-            self.objects[i].compoM_MW = {"z": m.values["z"], "z_std": m.errors["z"], "AB": m.values["AB"], "AB_std": m.errors["AB"], "chi2": m.fval, "red_chi2": m.fval/m.ndof, "ndof": m.ndof, "p_val": chi2.sf(m.fval, m.ndof), "norm": m.values["normalisation"], "norm_std": m.errors["normalisation"]}
-            
-            if save_plots==True:
-                self.objects[i].plot_compoM(param_type="MW")
+                self.objects[i].plot_compoM(param_type=param)
                 
     def xpca_classification(self):
         for i in tqdm(self.SNAQS_list):
