@@ -27,11 +27,16 @@ from compoM_functions import smc, lmc, mw
 
 #### Import classification functions
 #from NutMaat.classifier import Classifier
+from sklearn.neighbors import LocalOutlierFactor
+import astropy.units as u
+from specutils.spectra import Spectrum1D
+from specutils.fitting import fit_generic_continuum
 
 
 ### Import utilities
 from tqdm import tqdm
 from spectres import spectres
+import warnings
 
 class SNAQS_object():
     
@@ -50,7 +55,7 @@ class SNAQS_object():
             data = pd.read_csv(path + filename, sep="\s+")
             self.data = data[data["calibrated_flux"].notna() & (data["wavelength"]>4000) & (data["wavelength"]<9000)]
             #self.flux = self.data["calibrated_flux"].values*10**17
-            self.flux = self.data["calibrated_flux"]
+            self.flux = self.data["calibrated_flux"].values
             self.wave = self.data["wavelength"].values
             #self.error = ((self.data["flux_var"].values)**0.5*10**17)
             self.error = (self.data["flux_var"].values)**0.5
@@ -175,6 +180,8 @@ class SNAQS():
         self.dir_list = os.listdir(path)
         self.SNAQS_list = []
         self.SNAQS_dir_list = []
+        self.SNAQS_SPECID_list = []
+        self.SNAQS_NAME_list = []
         
         if not os.path.exists("Outputs/"):
             os.makedirs("Outputs/")
@@ -188,18 +195,38 @@ class SNAQS():
                 try:
                     if (hdu[0].header["RA"]>RA_range[0]) & (hdu[0].header["RA"]<RA_range[1]) & (hdu[0].header["DEC"]>DEC_range[0]) & (hdu[0].header["DEC"]<DEC_range[1]):
                         self.SNAQS_list.append(i)
+                        
+                        try:
+                            self.SNAQS_NAME_list.append(hdu[0].header["NAME"])
+                        except:
+                            self.SNAQS_NAME_list.append(np.nan)
+                            
+                        try:
+                            self.SNAQS_SPECID_list.append(int(hdu[0].header["SPEC_ID"]))
+                        except:
+                            self.SNAQS_SPECID_list.append(np.nan)
+                        
                         self.SNAQS_dir_list.append(os.path.join(self.path, i))
                 except:
                     print("WARNING: " + "File " + i + " not included due to missing RA and/or DEC.")
+                hdu.close()
             elif i[0]!="." and i[-3:]=="dat":
                 self.SNAQS_list.append(i)
+                self.SNAQS_SPECID_list.append(np.nan)
+                if i[:4]=="SDSS":
+                    if "combined" in i:
+                        self.SNAQS_NAME_list.append(i[:-13])
+                    else:
+                        self.SNAQS_NAME_list.append(i[:-4])
+                else:
+                    self.SNAQS_NAME_list.append(np.nan)
                 self.SNAQS_dir_list.append(os.path.join(self.path, i))
     
         self.objects = {}
         for i in self.SNAQS_list:
             self.objects[i] = SNAQS_object(self.path, i)
             
-    def fit_compoM(self, save_plots=True, param="SMC"):
+    def fit_compoM(self, plot=True, param="SMC"):
         '''Fits the loaded spectra with the SMC parameters. New atributes are then added to the SNAQS objects related to the fitting when done.'''
         for i in tqdm(self.SNAQS_list):
             if param=="SMC":
@@ -232,10 +259,10 @@ class SNAQS():
             elif param=="MW":
                 self.objects[i].compoM_MW = {"z": m.values["z"], "z_std": m.errors["z"], "AB": m.values["AB"], "AB_std": m.errors["AB"], "chi2": m.fval, "red_chi2": m.fval/m.ndof, "ndof": m.ndof, "p_val": chi2.sf(m.fval, m.ndof), "norm": m.values["normalisation"], "norm_std": m.errors["normalisation"]}
                 
-            if save_plots==True:
+            if plot==True:
                 self.objects[i].plot_compoM(param_type=param)
                 
-    def xpca_classification(self):
+    def xpca_classification(self, plot=True):
         for i in tqdm(self.SNAQS_list):
             #try:
             if i[-3:]=="dat":
@@ -252,7 +279,8 @@ class SNAQS():
             
             #self.objects[i].xpca = {"BestModel_flux": model_data["flux"], "BestModel_wave": model_data["wave"], "zBest": hdu[1].data["zBest"], "zBestErr": hdu[1].data["zBestErr"], "zBestChi2": hdu[1].data["zBestChi2"], "zBestType": hdu[1].data["zBestType"], "zBestSubType": hdu[1].data["zBestSubType"]}
             self.objects[i].xpca = {"BestModel_flux": rescaled_flux, "BestModel_wave": self.objects[i].wave, "zBest": hdu[1].data["zBest"], "zBestErr": hdu[1].data["zBestErr"], "zBestChi2": chi2_val, "zBestType": hdu[1].data["zBestType"], "zBestSubType": hdu[1].data["zBestSubType"]}
-            self.objects[i].plot_xpca()
+            if plot==True:
+                self.objects[i].plot_xpca()
             os.remove("{}/temp".format(os.getcwd()))
             os.remove("{}/xpca_bestfit_model_temp.csv".format(os.getcwd()))
             if i[-3:]=="dat":
@@ -261,7 +289,7 @@ class SNAQS():
             #    print("FAILED - Classification of object {} failed either due to XPCA software or due to the FITS/DAT file itself - setting output to NaN".format(i))
             #    self.objects[i].xpca = {"zBest": np.nan, "zBestErr": np.nan, "zBestChi2": np.nan, "zBestType": np.nan, "zBestSubType": np.nan}
     
-    def stellar_classification(self):
+    def stellar_classification(self, plot=True):
         print("Loading stellar templates...")
         try:
             template_list = os.listdir("templates/")
@@ -300,32 +328,136 @@ class SNAQS():
                 except:
                     chi2_list.append(np.inf)
             self.objects[i].stellar_classification = {"Template_file": template_list[np.argmin(chi2_list)], "Chi2": np.min(chi2_list)}
-            if ~np.isinf(np.min(chi2_list)):
+            if ~np.isinf(np.min(chi2_list)) and plot==True:
                 self.objects[i].plot_stellar(norm_list[np.argmin(chi2_list)])
                 
-    def full_run(self):
+    def local_outlier_detection(self, wave_points=4000, n_neighbors=15, plot=True, fit_continuum=True, num_outliers=5):
+        '''Outlier detection function that utilizes the Local Outlier Factor from sklearn. Wave_points determines the length of the array for the shared wavelength region for all spectra, which will then be applied to all spectra using the SpectRes package (default: 4000). 
+        Fit-continuum determines whether or not we should fit a generic continuum using the AstroPy package and then normalise the spectra to that continuum (default: True). n_neighbors specifies the number of neighbours per the definition in the LocalOutlierFactor function from sklearn (default: 15). 
+        num_outliers determines the number of outliers we want to extract to plotting, which is ordered from lowest outlier value to highest outlier value. For example num_outliers=5 extracts the 5 worst outlier values from the list (default: 5)'''
+        wave_lin = np.linspace(4200, 8500, wave_points)
+
+        num_samples = len(self.SNAQS_list)
+        np_arr = np.zeros((num_samples, wave_points))
+        np_arr = np.where(np_arr==0, np.nan, np_arr)
+
+        pd_data = pd.DataFrame(np_arr, columns=wave_lin)
+        
+        for i, name in tqdm(enumerate(self.SNAQS_list)):
+            flux_interp = spectres(wave_lin, self.objects[name].wave, self.objects[name].flux)
+            flux_interp /= np.mean(flux_interp)
+            if fit_continuum==True:
+                try:
+                    spectrum = Spectrum1D(flux=flux_interp*u.erg/(u.angstrom*u.s*u.cm*u.cm), spectral_axis=wave_lin*u.angstrom)
+                    with warnings.catch_warnings():  # Ignore warnings
+                        warnings.simplefilter('ignore')
+                        g1_fit = fit_generic_continuum(spectrum)
+                    y_continuum_fitted = g1_fit(wave_lin*u.angstrom)
+                
+                    flux_interp = (flux_interp-y_continuum_fitted.value)/y_continuum_fitted.value
+                except:
+                    print("Fitting continuum model failed - flux will be unnormalised.")
+            pd_data.iloc[i] = flux_interp
+            
+        pd_data = pd_data[~np.isinf(pd_data)]
+        pd_data = pd_data.dropna()
+        #print(pd_data)
+        clf = LocalOutlierFactor(n_neighbors=n_neighbors)
+        y_pred = clf.fit_predict(pd_data)
+        self.outlier_values = clf.negative_outlier_factor_
+        if plot==True:
+            for outlier_idx, outlier_val in zip([self.SNAQS_list[i] for i in np.argsort(self.outlier_values)[:num_outliers]], np.sort(self.outlier_values)[:num_outliers]):
+                fig = plt.figure(figsize=(12, 8))
+                plt.plot(self.objects[outlier_idx].wave, self.objects[outlier_idx].flux, color="red", label="Observed spectrum")
+                plt.plot(self.objects[outlier_idx].wave, self.objects[outlier_idx].flux+self.objects[outlier_idx].error, "--", color="red", alpha=0.5)
+                plt.plot(self.objects[outlier_idx].wave, self.objects[outlier_idx].flux-self.objects[outlier_idx].error, "--", color="red", alpha=0.1, label="Observed spec. errors")
+                
+                if not os.path.exists("Outputs/outlier_spectra"):
+                    os.makedirs("Outputs/outlier_spectra/")
+                
+                plt.xlabel("Wavelength [Å]")
+                if np.mean(self.objects[outlier_idx].flux)<10**(-10):
+                    plt.ylabel("Flux [$ erg/cm^{2}/s/Å $]")
+                else:
+                    plt.ylabel("Flux [$10^{-17} erg/cm^{2}/s/Å $]")
+                plt.grid(alpha=0.2)
+                plt.legend(loc="upper right")
+                plt.title("Outlier spectrum with LOF={}".format(outlier_val))
+                plt.savefig("Outputs/outlier_spectra/{}.pdf".format(self.objects[outlier_idx].name))
+                plt.close()
+            
+            
+            
+        
+                
+    def full_run(self, generate_plots=True, local_outlier_detection=True, wave_points=4000, n_neighbors=15, fit_continuum=True):
         print("#### FULL RUN INITIATED ---- Running XPCA + Stellar classification #####")
-        self.xpca_classification()
-        self.stellar_classification()
-        print("###### CLASSIFICATION COMPLETE - Exporting data to CSV")
+        self.xpca_classification(plot=generate_plots)
+        self.stellar_classification(plot=generate_plots)
+        for param_type in ["SMC", "LMC", "MW"]:
+            self.fit_compoM(plot=generate_plots, param=param_type)
+        print("###### CLASSIFICATION COMPLETE - Moving onto next step")
+        
+        if local_outlier_detection==True:
+            print("##### Starting Local Outlier Detection #####")
+            self.local_outlier_detection(wave_points=wave_points, n_neighbors=n_neighbors, fit_continuum=fit_continuum, plot=generate_plots)
+            print("##### Outlier detection successful! ######")
+        else:
+            np_arr = np.zeros(len(self.SNAQS_list))
+            np_arr = np.where(np_arr==0, np.nan, np_arr)
+            self.outlier_values = np_arr
         
         type_list, subtype_list, chi2_list, method_list, z_list, z_list_err = [], [], [], [], [], []
+        export_data = {"Object_name": self.SNAQS_list, "Type": [], "Subtype": [], "Method": [], "Chi2": [], "z": [], "z_std": [], "AB": [], "AB_std": [], "LOF_val": self.outlier_values}
         for i in tqdm(self.SNAQS_list):
-            if self.objects[i].xpca["zBestChi2"]<self.objects[i].stellar_classification["Chi2"]:
-                type_list.append(self.objects[i].xpca["zBestType"][0])
-                subtype_list.append(self.objects[i].xpca["zBestSubType"][0])
-                chi2_list.append(self.objects[i].xpca["zBestChi2"])
-                method_list.append("xPCA")
-                z_list.append(self.objects[i].xpca["zBest"][0])
-                z_list_err.append(self.objects[i].xpca["zBestErr"][0])
-            else:
-                type_list.append("STAR")
-                subtype_list.append(self.objects[i].stellar_classification["Template_file"][:-5])
-                chi2_list.append(self.objects[i].stellar_classification["Chi2"])
-                method_list.append("PyHammer")
-                z_list.append(np.nan)
-                z_list_err.append(np.nan)
-        pd.DataFrame({"Object_name": self.SNAQS_list, "Type": type_list, "Subtype": subtype_list, "Chi2": chi2_list, "z": z_list, "z_std": z_list_err}).to_csv("Full_run_export.csv", index=False)
+            chi2_best_idx = np.argmin([self.objects[i].compoM_SMC["chi2"], self.objects[i].compoM_LMC["chi2"], self.objects[i].compoM_MW["chi2"], self.objects[i].xpca["zBestChi2"], self.objects[i].stellar_classification["Chi2"]])
+            if chi2_best_idx==0:
+                export_data["Type"].append("QSO")
+                export_data["Subtype"].append(np.nan)
+                export_data["Chi2"].append(self.objects[i].compoM_SMC["chi2"])
+                export_data["Method"].append("Composite model - SMC")
+                export_data["z"].append(self.objects[i].compoM_SMC["z"])
+                export_data["z_std"].append(self.objects[i].compoM_SMC["z_std"])
+                export_data["AB"].append(self.objects[i].compoM_SMC["AB"])
+                export_data["AB_std"].append(self.objects[i].compoM_SMC["AB_std"])
+            elif chi2_best_idx==1:
+                export_data["Type"].append("QSO")
+                export_data["Subtype"].append(np.nan)
+                export_data["Chi2"].append(self.objects[i].compoM_LMC["chi2"])
+                export_data["Method"].append("Composite model - LMC")
+                export_data["z"].append(self.objects[i].compoM_LMC["z"])
+                export_data["z_std"].append(self.objects[i].compoM_LMC["z_std"])
+                export_data["AB"].append(self.objects[i].compoM_LMC["AB"])
+                export_data["AB_std"].append(self.objects[i].compoM_LMC["AB_std"])
+            elif chi2_best_idx==2:
+                export_data["Type"].append("QSO")
+                export_data["Subtype"].append(np.nan)
+                export_data["Chi2"].append(self.objects[i].compoM_MW["chi2"])
+                export_data["Method"].append("Composite model - MW")
+                export_data["z"].append(self.objects[i].compoM_MW["z"])
+                export_data["z_std"].append(self.objects[i].compoM_MW["z_std"])
+                export_data["AB"].append(self.objects[i].compoM_MW["AB"])
+                export_data["AB_std"].append(self.objects[i].compoM_MW["AB_std"])
+            elif chi2_best_idx==3:
+                export_data["Type"].append(self.objects[i].xpca["zBestType"][0])
+                export_data["Subtype"].append(self.objects[i].xpca["zBestSubType"][0])
+                export_data["Chi2"].append(self.objects[i].xpca["zBestChi2"])
+                export_data["Method"].append("xPCA")
+                export_data["z"].append(self.objects[i].xpca["zBest"][0])
+                export_data["z_std"].append(self.objects[i].xpca["zBestErr"][0])
+                export_data["AB"].append(np.nan)
+                export_data["AB_std"].append(np.nan)
+            elif chi2_best_idx==4:
+                export_data["Type"].append("STAR")
+                export_data["Subtype"].append(self.objects[i].stellar_classification["Template_file"][:-5])
+                export_data["Chi2"].append(self.objects[i].stellar_classification["Chi2"])
+                export_data["Method"].append("PyHammer")
+                export_data["z"].append(np.nan)
+                export_data["z_std"].append(np.nan)
+                export_data["AB"].append(np.nan)
+                export_data["AB_std"].append(np.nan)
+            
+        pd.DataFrame(export_data).to_csv("Full_run_export.csv", index=False)
         print("#### EXPORT COMPLETED! #####")
                 
                 
