@@ -487,23 +487,92 @@ class SNAQS():
                 plt.savefig("Outputs/outlier_spectra/{}.pdf".format(self.objects[outlier_idx].name))
                 plt.close()
             
+    def analysis_pipeline(self, path_to_data="", filename="Full_run_export.csv", qso_col="red", gal_col="brown", star_col="yellow", other_col="black", zbin_res=0.5):
+        if not os.path.exists(os.path.join(path_to_data, filename)):
+            raise Exception("Export data file not found (check path and filename) - If filename and path is correct, ensure that an export datafile from the pipeline exists, either by running the full_run pipeline for the function (WITH export enabled), or by moving the already existing file to the given path!")
+        
+        if not os.path.exists("Analysis/"):
+            print("Creating analysis folder...")
+            os.mkdir("Analysis/")
             
+        data = pd.read_csv(os.path.join(path_to_data, filename))
+        
+        ########### REDSHIFT HISTOGRAM ##############
+        fig = plt.figure(figsize=(12, 10))
+        zbin_num = int(((np.max(data["z"])**2-np.min(data["z"])**2)**0.5)/zbin_res)
+        
+        plt.hist(data["z"][data["Type"]=="GALAXY"], range=(np.min(data["z"]), np.max(data["z"])), bins=zbin_num, color=gal_col, label="GALAXY")
+        plt.hist(data["z"][data["Type"]=="STAR"], range=(np.min(data["z"]), np.max(data["z"])), bins=zbin_num, color=star_col, label="STAR")
+        plt.hist(data["z"][data["Type"]=="QSO"], range=(np.min(data["z"]), np.max(data["z"])), bins=zbin_num, color=qso_col, histtype="step", label="QSO")
+        plt.legend()
+        plt.grid(alpha=0.3)
+        plt.xlabel("Redshift [A.U.]")
+        plt.ylabel("Counts [A.U.]")
+        plt.savefig("Analysis/redshift_distrib.pdf")
+        plt.close()
+        
+        
+        ########## COLOR DISTRIBUTION ##########
+        fig = plt.figure(figsize=(12, 10))
+        
+        for obj_type in data["Type"].value_counts().index:
+            if obj_type=="QSO":
+                color = qso_col
+            elif obj_type=="GALAXY":
+                color = gal_col
+            elif obj_type=="STAR":
+                color = star_col
+            else:
+                color = other_col
+            data_slice = data[data["Type"]==obj_type]
+            #### Uncertainty propagation ####
+            y_err = ((data_slice["err_SDSS-g"].values)**2+(data_slice["err_SDSS-r"].values)**2)**0.5
+            x_err = ((data_slice["err_UKIDSS_J"].values)**2+(data_slice["err_UKIDSS_K"].values)**2)**0.5
             
+            plt.errorbar(data_slice["UKIDSS_J"].values-data_slice["UKIDSS_K"].values, data_slice["SDSS-g"].values-data_slice["SDSS-r"].values, yerr=y_err, xerr=x_err, fmt=".", color=color, label=obj_type)
+        plt.legend()
+        plt.grid(alpha=0.3)
+        plt.xlabel("J-K (UKIDSS)")
+        plt.ylabel("g-r (SDSS)")
+        plt.savefig("Analysis/grJK_plot.pdf")
+        plt.close()
+        
+        ############ RA/DEC DISTRIBUTION #############
+        fig = plt.figure(figsize=(12, 10))
+        
+        for obj_type in data["Type"].value_counts().index:
+            if obj_type=="QSO":
+                color = qso_col
+            elif obj_type=="GALAXY":
+                color = gal_col
+            elif obj_type=="STAR":
+                color = star_col
+            else:
+                color = other_col
+            data_slice = data[data["Type"]==obj_type]
+            
+            plt.plot(data_slice["RA"].values, data_slice["Dec"].values, ".", marker="*", color=color, label=obj_type)
+        plt.legend()
+        plt.grid(alpha=0.3)
+        plt.xlabel("Right Ascension [A.U.]")
+        plt.ylabel("Declination [A.U.]")
+        plt.savefig("Analysis/RA_DEC_plot.pdf")
+        plt.close()
         
                 
-    def full_run(self, generate_plots=True, local_outlier_detection=True, wave_points=2000, n_neighbors=15, fit_continuum=True, run_classification=True):
-        if run_classification==True:
-            print("#### FULL RUN INITIATED ---- Running XPCA + Stellar classification #####")
+    def full_run(self, generate_plots=True, local_outlier_detection=True, wave_points=2000, n_neighbors=15, fit_continuum=True, classification=True, analysis=True, export_path="", filename="Full_run_export"):
+        if classification==True:
+            print("##### FULL RUN INITIATED ---- Running XPCA + Stellar classification #####")
             self.xpca_classification(plot=generate_plots)
             self.stellar_classification(plot=generate_plots)
             for param_type in ["SMC", "LMC", "MW"]:
                 self.fit_compoM(plot=generate_plots, param=param_type)
-            print("###### CLASSIFICATION COMPLETE - Moving onto next step")
+            print("##### CLASSIFICATION COMPLETE - Moving onto next step #####")
         
         if local_outlier_detection==True:
             print("##### Starting Local Outlier Detection #####")
             self.local_outlier_detection(wave_points=wave_points, n_neighbors=n_neighbors, fit_continuum=fit_continuum, plot=generate_plots)
-            print("##### Outlier detection successful! ######")
+            print("##### Outlier detection successful! #####")
         else:
             np_arr = np.zeros(len(self.SNAQS_list))
             np_arr = np.where(np_arr==0, np.nan, np_arr)
@@ -559,8 +628,13 @@ class SNAQS():
                 export_data["AB"].append(np.nan)
                 export_data["AB_std"].append(np.nan)
             
-        pd.DataFrame(export_data).to_csv("Full_run_export.csv", index=False)
-        print("#### EXPORT COMPLETED! #####")
+        pd.DataFrame(export_data).to_csv(os.path.join(export_path, filename) + ".csv", index=False)
+        print("##### EXPORT COMPLETED! #####")
+        
+        if analysis==True:
+            print("#### Conducting analysis ####")
+            self.analysis_pipeline(path_to_data=export_path, filename=filename)
+            print("#### Analysis complete! ####")
                 
                 
         
