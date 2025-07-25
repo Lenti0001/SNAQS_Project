@@ -38,33 +38,12 @@ from specutils.fitting import fit_generic_continuum
 from tqdm import tqdm
 from spectres import spectres
 import warnings
+import gc
 
 class SNAQS_object():
     
-    def __init__(self, path, filename, wave_min=4000, wave_max=7800):
+    def __init__(self, path, filename, SDSS_dat=None, wave_min=4000, wave_max=7800):
         self.filename = filename
-        
-        if "SDSS_J" in self.filename:
-            idx=6
-        elif "SDSSJ" or "sdssJ" in self.filename:
-            idx=5
-            
-        if "+" in self.filename:
-            idx_plus = self.filename[idx:].index("+")
-            if idx_plus==4:
-                idx_plus += idx
-                self.skycoord = SkyCoord("{} {} +{} {}".format(self.filename[idx:idx+2], self.filename[idx+2:idx+4], self.filename[idx_plus+1:idx_plus+3], self.filename[idx_plus+3:idx_plus+5]), unit=(u.hourangle, u.deg))
-            elif idx_plus==6:
-                idx_plus += idx
-                self.skycoord = SkyCoord("{} {} {} +{} {} {}".format(self.filename[idx:idx+2], self.filename[idx+2:idx+4], self.filename[idx+4:idx+6], self.filename[idx_plus+1:idx_plus+3], self.filename[idx_plus+3:idx_plus+5], self.filename[idx_plus+5:idx_plus+7]), unit=(u.hourangle, u.deg))
-        else:
-            idx_ = self.filename[idx:].index("_")
-            if idx_==4:
-                idx_ += idx
-                self.skycoord = SkyCoord("{} {} +{} {}".format(self.filename[idx:idx+2], self.filename[idx+2:idx+4], self.filename[idx_+1:idx_+3], self.filename[idx_+3:idx_+5]), unit=(u.hourangle, u.deg))
-            elif idx_==6:
-                idx_ += idx
-                self.skycoord = SkyCoord("{} {} {} +{} {} {}".format(self.filename[idx:idx+2], self.filename[idx+2:idx+4], self.filename[idx+4:idx+6], self.filename[idx_+1:idx_+3], self.filename[idx_+3:idx_+5], self.filename[idx_+5:idx_+7]), unit=(u.hourangle, u.deg))
         
         if self.filename[-4:]=="fits":
             self.name = filename[:-5]
@@ -72,9 +51,50 @@ class SNAQS_object():
             self.flux = self.hdu[1].data["flux"]
             self.wave = 10**(self.hdu[1].data["loglam"])
             self.error = 1/self.hdu[1].data["ivar"]**0.5
-            self.RA = self.hdu[0].header["RA"]
-            self.DEC = self.hdu[0].header["DEC"]
+            try:
+                self.RA = self.hdu[0].header["PLUG_RA"]
+                self.DEC = self.hdu[0].header["PLUG_DEC"]
+            except:
+                self.RA = self.hdu[0].header["RA"]
+                try:
+                    self.DEC = self.hdu[0].header["DEC"]
+                except:
+                    self.DEC = self.hdu[0].header["Dec"]
+            
+            ### Attempt to improve the RA/DEC precision by cross-information with the "AllSDSS" datafile:
+            if SDSS_dat is not None:
+                try:
+                    SDSS_slice = SDSS_dat[SDSS_dat["source_id"].astype(int)==int(self.hdu[0].header["SPEC_ID"])]
+                    if len(SDSS_slice)==1:
+                        self.RA = SDSS_slice["RA_ICRS"]
+                        self.DEC = SDSS_slice["DE_ICRS"]
+                    print("RA and DEC replaced by the RA_ICRS and DE_ICRS values from the SDSS datafile!")
+                except:
+                    print("WARNING: RA and DEC could not be replaced by those in the SDSS datafile. Continuing with header info....")
+                
         elif self.filename[-3:]=="dat":
+            if "SDSS_J" in self.filename:
+                idx=6
+            elif "SDSSJ" or "sdssJ" in self.filename:
+                idx=5
+                
+            if "+" in self.filename:
+                idx_plus = self.filename[idx:].index("+")
+                if idx_plus==4:
+                    idx_plus += idx
+                    self.skycoord = SkyCoord("{} {} +{} {}".format(self.filename[idx:idx+2], self.filename[idx+2:idx+4], self.filename[idx_plus+1:idx_plus+3], self.filename[idx_plus+3:idx_plus+5]), unit=(u.hourangle, u.deg))
+                elif idx_plus==6:
+                    idx_plus += idx
+                    self.skycoord = SkyCoord("{} {} {} +{} {} {}".format(self.filename[idx:idx+2], self.filename[idx+2:idx+4], self.filename[idx+4:idx+6], self.filename[idx_plus+1:idx_plus+3], self.filename[idx_plus+3:idx_plus+5], self.filename[idx_plus+5:idx_plus+7]), unit=(u.hourangle, u.deg))
+            else:
+                idx_ = self.filename[idx:].index("_")
+                if idx_==4:
+                    idx_ += idx
+                    self.skycoord = SkyCoord("{} {} +{} {}".format(self.filename[idx:idx+2], self.filename[idx+2:idx+4], self.filename[idx_+1:idx_+3], self.filename[idx_+3:idx_+5]), unit=(u.hourangle, u.deg))
+                elif idx_==6:
+                    idx_ += idx
+                    self.skycoord = SkyCoord("{} {} {} +{} {} {}".format(self.filename[idx:idx+2], self.filename[idx+2:idx+4], self.filename[idx+4:idx+6], self.filename[idx_+1:idx_+3], self.filename[idx_+3:idx_+5], self.filename[idx_+5:idx_+7]), unit=(u.hourangle, u.deg))
+            
             self.name = filename[:-4]
             data = pd.read_csv(path + filename, sep="\s+")
             self.data = data[data["calibrated_flux"].notna() & (data["wavelength"]>wave_min) & (data["wavelength"]<wave_max) & (data["calibrated_flux"]>10**(-20))]
@@ -199,7 +219,8 @@ class SNAQS_object():
         
         temp_flux = hdu_temp[1].data["flux"]
         temp_wave = 10**hdu_temp[1].data["loglam"]
-        temp_flux_rescale = spectres(self.wave, temp_wave, temp_flux)
+        #temp_flux_rescale = spectres(self.wave, temp_wave, temp_flux)
+        temp_flux_rescale = np.interp(self.wave, temp_wave, temp_flux)
         
         plt.plot(self.wave, norm_guess*temp_flux_rescale, "--", color="black", label="Stellar-fit best-fit template")
         
@@ -223,7 +244,7 @@ class SNAQS_object():
 
 class SNAQS():
     
-    def __init__(self, path, RA_range=[190, 210], DEC_range=[22, 36]):
+    def __init__(self, path, SDSS, RA_range=[190, 210], DEC_range=[22, 36], survey_photo_filename="Surveyphotometry.dat", SDSS_dat_filename="AllSDSS.dat"):
         self.path = path
         self.dir_list = os.listdir(path)
         
@@ -239,7 +260,18 @@ class SNAQS():
             os.makedirs("Outputs/")
         
         #### Photometric information ####
-        self.photometric = pd.read_csv("Surveyphotometry.dat", sep="\s+") ####Main data for photometric information
+        try:
+            self.photometric = pd.read_csv(os.path.join("Datafiles/", survey_photo_filename), sep="\s+") ####Main data for photometric information
+        except:
+            raise Exception("Cannot proceed - Photometry file inside of the Datafiles folder not found! Make sure to include a photometry file containing photometric data (in either CSV or dat or TXT format) inside of this folder, and pass the name to the function.")
+        
+        self.SDSS_dat = None
+        if SDSS==True:
+            try:
+                self.SDSS_dat = pd.read_csv(os.path.join("Datafiles/", SDSS_dat_filename), sep="\s+")
+            except:
+                print("WARNING: You have specified that the loaded objects are SDSS spectra, but no SDSS datafile parameters can be found. The pipeline will still function, but some parameters (primarily RA/Dec) may be unprecise or may not exist.")
+                
         self.photometric_idx_list = []
         
         for i in self.dir_list:
@@ -279,7 +311,7 @@ class SNAQS():
     
         self.objects = {}
         for i in self.SNAQS_list:
-            self.objects[i] = SNAQS_object(self.path, i)
+            self.objects[i] = SNAQS_object(self.path, i, self.SDSS_dat)
             self.RA_list.append(self.objects[i].RA)
             self.DEC_list.append(self.objects[i].DEC)
             
@@ -324,6 +356,10 @@ class SNAQS():
         self.WISE_W4_list = self.photometric.iloc[self.photometric_idx_list]["WISE_W4"]
         self.err_WISE_W4_list = self.photometric.iloc[self.photometric_idx_list]["err_WISE_W4"]
         
+        ##### After use, we delete the photometric file and SDSS file into the loader as to save on memory:
+        del self.photometric
+        del self.photometric_idx_list
+        del self.SDSS_dat
             
     def fit_compoM(self, plot=True, param="SMC"):
         '''Fits the loaded spectra with the SMC parameters. New atributes are then added to the SNAQS objects related to the fitting when done.'''
@@ -374,7 +410,9 @@ class SNAQS():
                 
                 ###### IMPORTANT: Calculating OWN CHI2 HERE, not the one PROVIDED FROM XPCA!!! (Also rescaling the flux values to the ones provided by the target wavelength)
                 rescaled_flux = spectres(self.objects[i].wave, model_data["wave"].values, model_data["flux"].values)
-                chi2_val = np.sum((self.objects[i].flux-rescaled_flux)**2/self.objects[i].error**2)
+                #rescaled_flux = np.interp(self.objects[i].wave, model_data["wave"].values, model_data["flux"].values)
+                mask = ~np.isnan(rescaled_flux)
+                chi2_val = np.sum((self.objects[i].flux[mask]-rescaled_flux[mask])**2/self.objects[i].error[mask]**2)
                 
                 #self.objects[i].xpca = {"BestModel_flux": model_data["flux"], "BestModel_wave": model_data["wave"], "zBest": hdu[1].data["zBest"], "zBestErr": hdu[1].data["zBestErr"], "zBestChi2": hdu[1].data["zBestChi2"], "zBestType": hdu[1].data["zBestType"], "zBestSubType": hdu[1].data["zBestSubType"]}
                 self.objects[i].xpca = {"BestModel_flux": rescaled_flux, "BestModel_wave": self.objects[i].wave, "zBest": hdu[1].data["zBest"], "zBestErr": hdu[1].data["zBestErr"], "zBestChi2": chi2_val, "zBestType": hdu[1].data["zBestType"], "zBestSubType": hdu[1].data["zBestSubType"]}
@@ -409,7 +447,8 @@ class SNAQS():
                         
                     temp_wave = 10**hdu_temp[1].data["loglam"]
                     temp_flux = hdu_temp[1].data["flux"]
-                    temp_flux_rescale = spectres(self.objects[i].wave, temp_wave, temp_flux)
+                    #temp_flux_rescale = spectres(self.objects[i].wave, temp_wave, temp_flux)
+                    temp_flux_rescale = np.interp(self.objects[i].wave, temp_wave, temp_flux)
                     
                     norm_guess = np.mean(self.objects[i].flux)/np.mean(temp_flux)
                     
@@ -430,7 +469,7 @@ class SNAQS():
             if ~np.isinf(np.min(chi2_list)) and plot==True:
                 self.objects[i].plot_stellar(norm_list[np.argmin(chi2_list)])
                 
-    def local_outlier_detection(self, wave_points=2000, n_neighbors=15, plot=True, fit_continuum=True, num_outliers=5):
+    def local_outlier_detection(self, wave_points=2000, n_neighbors=15, plot=True, fit_continuum=True, num_outliers=5, plot_failed_LOF=True):
         '''Outlier detection function that utilizes the Local Outlier Factor from sklearn. Wave_points determines the length of the array for the shared wavelength region for all spectra, which will then be applied to all spectra using the SpectRes package (default: 4000). 
         Fit-continuum determines whether or not we should fit a generic continuum using the AstroPy package and then normalise the spectra to that continuum (default: True). n_neighbors specifies the number of neighbours per the definition in the LocalOutlierFactor function from sklearn (default: 15). 
         num_outliers determines the number of outliers we want to extract to plotting, which is ordered from lowest outlier value to highest outlier value. For example num_outliers=5 extracts the 5 worst outlier values from the list (default: 5)'''
@@ -444,6 +483,7 @@ class SNAQS():
         
         for i, name in tqdm(enumerate(self.SNAQS_list)):
             flux_interp = spectres(wave_lin, self.objects[name].wave, self.objects[name].flux)
+            #flux_interp = np.interp(wave_lin, self.objects[name].wave, self.objects[name].flux)
             flux_interp /= np.mean(flux_interp)
             if fit_continuum==True:
                 try:
@@ -457,14 +497,24 @@ class SNAQS():
                 except:
                     print("Fitting continuum model failed - flux will be unnormalised.")
             pd_data.iloc[i] = flux_interp
-            
+
+        raw_data = pd_data
         pd_data = pd_data[~np.isinf(pd_data)]
         pd_data = pd_data.dropna()
-        self.pd_data = pd_data
         
         clf = LocalOutlierFactor(n_neighbors=n_neighbors)
         y_pred = clf.fit_predict(pd_data)
-        self.outlier_values = clf.negative_outlier_factor_
+        outlier_arr = clf.negative_outlier_factor_
+
+        self.outlier_values = []
+        k = 0
+        for i in raw_data.iloc:
+            if sum(np.isinf(i))>0 or sum(np.isnan(i))>0:
+                self.outlier_values.append(np.nan)
+            else:
+                self.outlier_values.append(outlier_arr[k])
+                k += 1
+        #self.outlier_values = clf.negative_outlier_factor_
             
         if plot==True:
             for outlier_idx, outlier_val in zip([self.SNAQS_list[i] for i in np.argsort(self.outlier_values)[:num_outliers]], np.sort(self.outlier_values)[:num_outliers]):
@@ -486,52 +536,109 @@ class SNAQS():
                 plt.title("Outlier spectrum with LOF={}".format(outlier_val))
                 plt.savefig("Outputs/outlier_spectra/{}.pdf".format(self.objects[outlier_idx].name))
                 plt.close()
+        if plot_failed_LOF==True:
+            for i, na_check in enumerate(np.isnan(self.outlier_values)):
+                outlier_idx = self.SNAQS_list[i]
+                if na_check==True:
+                    fig = plt.figure(figsize=(12, 8))
+                    plt.plot(self.objects[outlier_idx].wave, self.objects[outlier_idx].flux, color="red", label="Observed spectrum")
+                    plt.plot(self.objects[outlier_idx].wave, self.objects[outlier_idx].flux+self.objects[outlier_idx].error, "--", color="red", alpha=0.5)
+                    plt.plot(self.objects[outlier_idx].wave, self.objects[outlier_idx].flux-self.objects[outlier_idx].error, "--", color="red", alpha=0.1, label="Observed spec. errors")
+
+                    if not os.path.exists("Outputs/outlier_spectra"):
+                        os.makedirs("Outputs/outlier_spectra/")
+
+                    plt.xlabel("Wavelength [Å]")
+                    if np.mean(self.objects[outlier_idx].flux)<10**(-10):
+                        plt.ylabel("Flux [$ erg/cm^{2}/s/Å $]")
+                    else:
+                        plt.ylabel("Flux [$10^{-17} erg/cm^{2}/s/Å $]")
+                    plt.grid(alpha=0.2)
+                    plt.legend(loc="upper right")
+                    plt.title("Outlier spectrum with failed LOF determination (LOF=NaN)")
+                    plt.savefig("Outputs/outlier_spectra/{}_FAILED_LOF.pdf".format(self.objects[outlier_idx].name))
+                    plt.close()
             
-    def analysis_pipeline(self, path_to_data="", filename="Full_run_export.csv", qso_col="red", gal_col="brown", star_col="yellow", other_col="black", zbin_res=0.5):
-        if not os.path.exists(os.path.join(path_to_data, filename)):
+    def analysis_pipeline(self, path_to_data="", filename="Full_run_export.csv", qso_col="red", gal_col="blue", star_col="green", other_col="black", zbin_res=0.5, error_thresh=1, min_nbin=5):
+        if not os.path.exists(os.path.join(path_to_data, filename + ".csv")):
             raise Exception("Export data file not found (check path and filename) - If filename and path is correct, ensure that an export datafile from the pipeline exists, either by running the full_run pipeline for the function (WITH export enabled), or by moving the already existing file to the given path!")
         
         if not os.path.exists("Analysis/"):
             print("Creating analysis folder...")
             os.mkdir("Analysis/")
             
-        data = pd.read_csv(os.path.join(path_to_data, filename))
+        data = pd.read_csv(os.path.join(path_to_data, filename + ".csv"))
         
         ########### REDSHIFT HISTOGRAM ##############
-        fig = plt.figure(figsize=(12, 10))
-        zbin_num = int(((np.max(data["z"])**2-np.min(data["z"])**2)**0.5)/zbin_res)
+        fig = plt.figure(figsize=(12*len(data["Type"].value_counts().index), 10))
+        rows, columns = 1, len(data["Type"].value_counts().index)
         
-        plt.hist(data["z"][data["Type"]=="GALAXY"], range=(np.min(data["z"]), np.max(data["z"])), bins=zbin_num, color=gal_col, label="GALAXY")
-        plt.hist(data["z"][data["Type"]=="STAR"], range=(np.min(data["z"]), np.max(data["z"])), bins=zbin_num, color=star_col, label="STAR")
-        plt.hist(data["z"][data["Type"]=="QSO"], range=(np.min(data["z"]), np.max(data["z"])), bins=zbin_num, color=qso_col, histtype="step", label="QSO")
-        plt.legend()
-        plt.grid(alpha=0.3)
-        plt.xlabel("Redshift [A.U.]")
-        plt.ylabel("Counts [A.U.]")
+        for i, obj_type in enumerate(data["Type"].value_counts().index):
+            if obj_type=="QSO":
+                color = qso_col
+                sign="1"
+            elif obj_type=="GALAXY":
+                color = gal_col
+                sign="d"
+            elif obj_type=="STAR":
+                color = star_col
+                sign="*"
+            else:
+                color = other_col
+                sign="s"
+            zbin_num = int(((np.max(data["z"])**2-np.min(data["z"])**2)**0.5)/zbin_res)
+            if zbin_num==0 or np.isnan(zbin_num)==True:
+                zbin_num=min_nbin
+            
+            plt.subplot(rows, columns, i+1)
+            data_slice = data["z"][data["Type"]==obj_type]
+            plt.hist(data_slice, range=(np.min(data_slice), np.max(data_slice)), bins=zbin_num, color=color, edgecolor="black", label=obj_type)
+            plt.legend(loc="upper right")
+            plt.grid(alpha=0.3)
+            plt.xlabel("Redshift [A.U.]")
+            plt.ylabel("Counts [A.U.]")
         plt.savefig("Analysis/redshift_distrib.pdf")
         plt.close()
         
         
         ########## COLOR DISTRIBUTION ##########
-        fig = plt.figure(figsize=(12, 10))
-        
+        error_size_thresh = 1
+        fig = plt.figure(figsize=(20, 15))
         for obj_type in data["Type"].value_counts().index:
             if obj_type=="QSO":
                 color = qso_col
+                sign="1"
             elif obj_type=="GALAXY":
                 color = gal_col
+                sign="d"
             elif obj_type=="STAR":
                 color = star_col
+                sign="*"
             else:
                 color = other_col
+                sign="s"
             data_slice = data[data["Type"]==obj_type]
             #### Uncertainty propagation ####
             y_err = ((data_slice["err_SDSS-g"].values)**2+(data_slice["err_SDSS-r"].values)**2)**0.5
             x_err = ((data_slice["err_UKIDSS_J"].values)**2+(data_slice["err_UKIDSS_K"].values)**2)**0.5
-            
-            plt.errorbar(data_slice["UKIDSS_J"].values-data_slice["UKIDSS_K"].values, data_slice["SDSS-g"].values-data_slice["SDSS-r"].values, yerr=y_err, xerr=x_err, fmt=".", color=color, label=obj_type)
-        plt.legend()
+
+            error_mask = (y_err<error_size_thresh) & (x_err<error_size_thresh)
+            data_slice = data_slice[error_mask]
+            x_err_low = x_err[error_mask]
+            y_err_low = y_err[error_mask]
+
+            markers, bars, caps = plt.errorbar(data_slice["UKIDSS_J"].values-data_slice["UKIDSS_K"].values, data_slice["SDSS-g"].values-data_slice["SDSS-r"].values, yerr=y_err_low, xerr=x_err_low, fmt=".", markersize=5, elinewidth=1, ecolor="black", capsize=0.7, color=color, label=obj_type)
+            [bar.set_alpha(0.3) for bar in bars]
+            [cap.set_alpha(0.3) for cap in caps]
+
+            data_slice = data[data["Type"]==obj_type][~error_mask]
+            plt.plot(data_slice["UKIDSS_J"].values-data_slice["UKIDSS_K"].values, data_slice["SDSS-g"].values-data_slice["SDSS-r"].values, ".", marker=sign, markersize=7, color="teal", label=obj_type + " (Large $\sigma_{SDSS, UKIDSS}>$" + "{})".format(error_size_thresh))
+
+
+        plt.legend(loc="upper right", fontsize=10)
         plt.grid(alpha=0.3)
+        plt.xlim(0.25, 2)
+        plt.ylim(-0.3, 2)
         plt.xlabel("J-K (UKIDSS)")
         plt.ylabel("g-r (SDSS)")
         plt.savefig("Analysis/grJK_plot.pdf")
@@ -543,15 +650,18 @@ class SNAQS():
         for obj_type in data["Type"].value_counts().index:
             if obj_type=="QSO":
                 color = qso_col
+                sign="1"
             elif obj_type=="GALAXY":
                 color = gal_col
+                sign="d"
             elif obj_type=="STAR":
                 color = star_col
+                sign="*"
             else:
                 color = other_col
             data_slice = data[data["Type"]==obj_type]
             
-            plt.plot(data_slice["RA"].values, data_slice["Dec"].values, ".", marker="*", color=color, label=obj_type)
+            plt.plot(data_slice["RA"].values, data_slice["Dec"].values, ".", marker=sign, color=color, label=obj_type)
         plt.legend()
         plt.grid(alpha=0.3)
         plt.xlabel("Right Ascension [A.U.]")
@@ -610,12 +720,18 @@ class SNAQS():
                 export_data["AB"].append(self.objects[i].compoM_MW["AB"])
                 export_data["AB_std"].append(self.objects[i].compoM_MW["AB_std"])
             elif chi2_best_idx==3:
-                export_data["Type"].append(self.objects[i].xpca["zBestType"][0])
-                export_data["Subtype"].append(self.objects[i].xpca["zBestSubType"][0])
+                try:
+                    export_data["Type"].append(self.objects[i].xpca["zBestType"][0])
+                    export_data["Subtype"].append(self.objects[i].xpca["zBestSubType"][0])
+                    export_data["z"].append(self.objects[i].xpca["zBest"][0])
+                    export_data["z_std"].append(self.objects[i].xpca["zBestErr"][0])
+                except:
+                    export_data["Type"].append(self.objects[i].xpca["zBestType"])
+                    export_data["Subtype"].append(self.objects[i].xpca["zBestSubType"])
+                    export_data["z"].append(self.objects[i].xpca["zBest"])
+                    export_data["z_std"].append(self.objects[i].xpca["zBestErr"])
                 export_data["Chi2"].append(self.objects[i].xpca["zBestChi2"])
                 export_data["Method"].append("xPCA")
-                export_data["z"].append(self.objects[i].xpca["zBest"][0])
-                export_data["z_std"].append(self.objects[i].xpca["zBestErr"][0])
                 export_data["AB"].append(np.nan)
                 export_data["AB_std"].append(np.nan)
             elif chi2_best_idx==4:
@@ -628,7 +744,7 @@ class SNAQS():
                 export_data["AB"].append(np.nan)
                 export_data["AB_std"].append(np.nan)
             
-        pd.DataFrame(export_data).to_csv(os.path.join(export_path, filename) + ".csv", index=False)
+        pd.DataFrame(export_data).to_csv(os.path.join(export_path, filename + ".csv"), index=False)
         print("##### EXPORT COMPLETED! #####")
         
         if analysis==True:
