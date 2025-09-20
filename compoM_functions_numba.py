@@ -8,7 +8,8 @@ Created on Mon Apr 21 00:43:33 2025
 
 import numpy as np
 import pandas as pd
-from spectres import spectres_numba as spectres
+import numba
+from spectres import spectres_numba
 
 #### DEFINE PATH TO COMPOSITE MODEL HERE ####
 compoM_path = "Datafiles/compoM.data"
@@ -30,7 +31,7 @@ def smc(wave, z, AB, normalisation):
     model = 10**(-0.4*Alambda)*model_data["flux"].to_numpy()
 
     #Rectify to the wavelength sampling of the observed spectrum
-    model_resample = spectres(wave, model_data["wave"].to_numpy()*(1+z),model)*normalisation
+    model_resample = spectres_numba(wave, model_data["wave"].to_numpy()*(1+z),model)*normalisation
     return model_resample
 
 def lmc(wave, z, AB, normalisation):
@@ -50,7 +51,7 @@ def lmc(wave, z, AB, normalisation):
     model = 10**(-0.4*Alambda)*model_data["flux"].to_numpy()
 
     #Rectify to the wavelength sampling of the observed spectrum
-    model_resample = spectres(wave, model_data["wave"].to_numpy()*(1+z),model)*normalisation
+    model_resample = spectres_numba(wave, model_data["wave"].to_numpy()*(1+z),model)*normalisation
     return model_resample
 
 def mw(wave, z, AB, normalisation):
@@ -69,5 +70,5 @@ def mw(wave, z, AB, normalisation):
     model = 10**(-0.4*Alambda)*model_data["flux"].to_numpy()
     
     #Rectify to the wavelength sampling of the observed spectrum
-    model_resample = spectres(wave, model_data["wave"].to_numpy()*(1+z),model)*normalisation
+    model_resample = spectres_numba(wave, model_data["wave"].to_numpy()*(1+z),model)*normalisation
     return model_resample

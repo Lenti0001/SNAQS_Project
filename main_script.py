@@ -26,40 +26,49 @@ from helper_functions import find_decimal_point
 from compoM_functions import smc, lmc, mw
 
 #### Import classification functions
-#from NutMaat.classifier import Classifier
 from sklearn.neighbors import LocalOutlierFactor
 import astropy.units as u
 from astropy.coordinates import SkyCoord
 from specutils.spectra import Spectrum1D
 from specutils.fitting import fit_generic_continuum
 
+### Query tools
+from astroquery.vizier import Vizier
 
 ### Import utilities
 from tqdm import tqdm
 from spectres import spectres
+from spectres import spectres_numba
+
 import warnings
 import gc
 
 class SNAQS_object():
     
-    def __init__(self, path, filename, SDSS_dat=None, wave_min=4000, wave_max=7800):
+    def __init__(self, path, filename, SDSS_dat=None, constrain_wave_SDSS=[3600, 8500], constrain_wave_DAT=[4000, 7600]):
         self.filename = filename
         
         if self.filename[-4:]=="fits":
             self.name = filename[:-5]
-            self.hdu = fits.open(path + filename)
-            self.flux = self.hdu[1].data["flux"]
-            self.wave = 10**(self.hdu[1].data["loglam"])
-            self.error = 1/self.hdu[1].data["ivar"]**0.5
+            hdu = fits.open(path + filename)
+            flux = hdu[1].data["flux"]
+            wave = 10**(hdu[1].data["loglam"])
+            error = 1/hdu[1].data["ivar"]**0.5
+            mask = (flux>constrain_wave_SDSS[0]) & (flux<constrain_wave_SDSS[1])
+            self.flux = flux[mask]
+            self.wave = wave[mask]
+            self.error = error[mask]
+
             try:
-                self.RA = self.hdu[0].header["PLUG_RA"]
-                self.DEC = self.hdu[0].header["PLUG_DEC"]
+                self.RA = hdu[0].header["PLUG_RA"]
+                self.DEC = hdu[0].header["PLUG_DEC"]
             except:
-                self.RA = self.hdu[0].header["RA"]
+                self.RA = hdu[0].header["RA"]
                 try:
-                    self.DEC = self.hdu[0].header["DEC"]
+                    self.DEC = hdu[0].header["DEC"]
                 except:
-                    self.DEC = self.hdu[0].header["Dec"]
+                    self.DEC = hdu[0].header["Dec"]
+            hdu.close()
             
             ### Attempt to improve the RA/DEC precision by cross-information with the "AllSDSS" datafile:
             if SDSS_dat is not None:
@@ -73,31 +82,23 @@ class SNAQS_object():
                     print("WARNING: RA and DEC could not be replaced by those in the SDSS datafile. Continuing with header info....")
                 
         elif self.filename[-3:]=="dat":
-            if "SDSS_J" in self.filename:
-                idx=6
-            elif "SDSSJ" or "sdssJ" in self.filename:
-                idx=5
-                
-            if "+" in self.filename:
-                idx_plus = self.filename[idx:].index("+")
-                if idx_plus==4:
-                    idx_plus += idx
-                    self.skycoord = SkyCoord("{} {} +{} {}".format(self.filename[idx:idx+2], self.filename[idx+2:idx+4], self.filename[idx_plus+1:idx_plus+3], self.filename[idx_plus+3:idx_plus+5]), unit=(u.hourangle, u.deg))
-                elif idx_plus==6:
-                    idx_plus += idx
-                    self.skycoord = SkyCoord("{} {} {} +{} {} {}".format(self.filename[idx:idx+2], self.filename[idx+2:idx+4], self.filename[idx+4:idx+6], self.filename[idx_plus+1:idx_plus+3], self.filename[idx_plus+3:idx_plus+5], self.filename[idx_plus+5:idx_plus+7]), unit=(u.hourangle, u.deg))
-            else:
-                idx_ = self.filename[idx:].index("_")
-                if idx_==4:
-                    idx_ += idx
-                    self.skycoord = SkyCoord("{} {} +{} {}".format(self.filename[idx:idx+2], self.filename[idx+2:idx+4], self.filename[idx_+1:idx_+3], self.filename[idx_+3:idx_+5]), unit=(u.hourangle, u.deg))
-                elif idx_==6:
-                    idx_ += idx
-                    self.skycoord = SkyCoord("{} {} {} +{} {} {}".format(self.filename[idx:idx+2], self.filename[idx+2:idx+4], self.filename[idx+4:idx+6], self.filename[idx_+1:idx_+3], self.filename[idx_+3:idx_+5], self.filename[idx_+5:idx_+7]), unit=(u.hourangle, u.deg))
+            mask = [i.isdigit() for i in filename]
+            mask_arr = np.array(mask)
+            coord_precision = sum(mask)
+            J_check = filename[np.where(mask_arr==True)[0][0]-1]
+            coords = [j for i, j in zip(mask, filename) if i]
+
+            if J_check=="J" or J_check=="j":
+                if coord_precision==12:
+                    self.skycoord = SkyCoord(f"{coords[0]+coords[1]} {coords[2]+coords[3]} {coords[4]+coords[5]} +{coords[6]+coords[7]} {coords[8]+coords[9]} {coords[10]+coords[11]}", unit=(u.hourangle, u.deg))
+                elif coord_precision==8:
+                    self.skycoord = SkyCoord(f"{coords[0]+coords[1]} {coords[2]+coords[3]} +{coords[4]+coords[5]} {coords[6]+coords[7]}", unit=(u.hourangle, u.deg))
+                else:
+                    print("COORDINATE NOT SET - Could not find coordinate from filename!")
             
             self.name = filename[:-4]
             data = pd.read_csv(path + filename, sep="\s+")
-            self.data = data[data["calibrated_flux"].notna() & (data["wavelength"]>wave_min) & (data["wavelength"]<wave_max) & (data["calibrated_flux"]>10**(-20))]
+            self.data = data[data["calibrated_flux"].notna() & (data["wavelength"]>constrain_wave_DAT[0]) & (data["wavelength"]<constrain_wave_DAT[1]) & (data["calibrated_flux"]>10**(-20))]
             self.flux = self.data["calibrated_flux"].values
             self.wave = self.data["wavelength"].values
             self.error = (self.data["flux_var"].values)**0.5
@@ -113,6 +114,10 @@ class SNAQS_object():
             self.z_header = self.hdu[2].data["Z"][0]
         except:
             self.z_header = None
+
+        vizier = Vizier()
+        query = vizier.query_region(self.skycoord, radius=1*u.arcsec, catalog=["VII/289/dr16q"], column_filters={'Gmag': '<19'})
+        try:
             
     def plot_compoM(self, param_type="SMC"):
         fig = plt.figure(figsize=(12, 8))
@@ -203,7 +208,7 @@ class SNAQS_object():
         plt.title("Best-fit template: {}".format(self.xpca["zBestType"][0]) + " with subtype: {}".format(self.xpca["zBestSubType"][0]))
         plt.savefig("Outputs/xpca/{}.pdf".format(self.name))
         plt.close()
-    def plot_stellar(self, norm_guess):
+    def plot_stellar(self):
         fig = plt.figure(figsize=(12, 8))
         plt.plot(self.wave, self.flux, color="red", label="Observed spectrum")
         plt.plot(self.wave, self.flux+self.error, "--", color="red", alpha=0.5)
@@ -212,17 +217,7 @@ class SNAQS_object():
         if not os.path.exists("Outputs/stellar_classification/"):
             os.makedirs("Outputs/stellar_classification/")
         
-        try:
-            hdu_temp = fits.open("templates/" + self.stellar_classification["Template_file"])
-        except:
-            hdu_temp = fits.open("templates_SB2/" + self.stellar_classification["Template_file"])
-        
-        temp_flux = hdu_temp[1].data["flux"]
-        temp_wave = 10**hdu_temp[1].data["loglam"]
-        #temp_flux_rescale = spectres(self.wave, temp_wave, temp_flux)
-        temp_flux_rescale = np.interp(self.wave, temp_wave, temp_flux)
-        
-        plt.plot(self.wave, norm_guess*temp_flux_rescale, "--", color="black", label="Stellar-fit best-fit template")
+        plt.plot(self.wave, self.stellar_classification["model_flux"], "--", color="black", label="Stellar-fit best-fit template")
         
         try:
             plt.plot([], [], ' ', label="$\chi² = $" + "{}".format(int(self.stellar_classification["Chi2"])))
@@ -244,7 +239,12 @@ class SNAQS_object():
 
 class SNAQS():
     
-    def __init__(self, path, SDSS, RA_range=[190, 210], DEC_range=[22, 36], survey_photo_filename="Surveyphotometry.dat", SDSS_dat_filename="AllSDSS.dat"):
+    def __init__(self, path, SDSS, RA_range=[190, 210], DEC_range=[22, 36], survey_photo_filename="Surveyphotometry.dat", SDSS_dat_filename="AllSDSS.dat", webui=False):
+        self.webui = webui
+        if self.webui==True:
+            self.progress_text = None
+            self.inplace_text = None
+
         self.path = path
         self.dir_list = os.listdir(path)
         
@@ -263,14 +263,20 @@ class SNAQS():
         try:
             self.photometric = pd.read_csv(os.path.join("Datafiles/", survey_photo_filename), sep="\s+") ####Main data for photometric information
         except:
-            raise Exception("Cannot proceed - Photometry file inside of the Datafiles folder not found! Make sure to include a photometry file containing photometric data (in either CSV or dat or TXT format) inside of this folder, and pass the name to the function.")
+            text = "Cannot proceed - Photometry file inside of the Datafiles folder not found! Make sure to include a photometry file containing photometric data (in either CSV or dat or TXT format) inside of this folder, and pass the name to the function."
+            if self.webui==True:
+                self.inplace_text=text
+            raise Exception(text)
         
         self.SDSS_dat = None
         if SDSS==True:
             try:
                 self.SDSS_dat = pd.read_csv(os.path.join("Datafiles/", SDSS_dat_filename), sep="\s+")
             except:
-                print("WARNING: You have specified that the loaded objects are SDSS spectra, but no SDSS datafile parameters can be found. The pipeline will still function, but some parameters (primarily RA/Dec) may be unprecise or may not exist.")
+                text = "WARNING: You have specified that the loaded objects are SDSS spectra, but no SDSS datafile parameters can be found. The pipeline will still function, but some parameters (primarily RA/Dec) may be unprecise or may not exist."
+                if self.webui==True:
+                    self.inplace_text=text
+                print(text)
                 
         self.photometric_idx_list = []
         
@@ -363,7 +369,7 @@ class SNAQS():
             
     def fit_compoM(self, plot=True, param="SMC"):
         '''Fits the loaded spectra with the SMC parameters. New atributes are then added to the SNAQS objects related to the fitting when done.'''
-        for i in tqdm(self.SNAQS_list):
+        for num,i in tqdm(enumerate(self.SNAQS_list)):
             if param=="SMC":
                 least_squares = LeastSquares(self.objects[i].wave, self.objects[i].flux, self.objects[i].error, smc)
             elif param=="LMC":
@@ -389,16 +395,24 @@ class SNAQS():
             ### Create new attributes related to the fitting procedure:
             if param=="SMC":
                 self.objects[i].compoM_SMC = {"z": m.values["z"], "z_std": m.errors["z"], "AB": m.values["AB"], "AB_std": m.errors["AB"], "chi2": m.fval, "red_chi2": m.fval/m.ndof, "ndof": m.ndof, "p_val": chi2.sf(m.fval, m.ndof), "norm": m.values["normalisation"], "norm_std": m.errors["normalisation"]}
+                self.objects[i].compoM_SMC["model_flux"] = smc(self.objects[i].wave, self.objects[i].compoM_SMC["z"], self.objects[i].compoM_SMC["AB"], self.objects[i].compoM_SMC["norm"])
             elif param=="LMC":
                 self.objects[i].compoM_LMC = {"z": m.values["z"], "z_std": m.errors["z"], "AB": m.values["AB"], "AB_std": m.errors["AB"], "chi2": m.fval, "red_chi2": m.fval/m.ndof, "ndof": m.ndof, "p_val": chi2.sf(m.fval, m.ndof), "norm": m.values["normalisation"], "norm_std": m.errors["normalisation"]}
+                self.objects[i].compoM_LMC["model_flux"] = lmc(self.objects[i].wave, self.objects[i].compoM_LMC["z"], self.objects[i].compoM_LMC["AB"], self.objects[i].compoM_LMC["norm"])
             elif param=="MW":
                 self.objects[i].compoM_MW = {"z": m.values["z"], "z_std": m.errors["z"], "AB": m.values["AB"], "AB_std": m.errors["AB"], "chi2": m.fval, "red_chi2": m.fval/m.ndof, "ndof": m.ndof, "p_val": chi2.sf(m.fval, m.ndof), "norm": m.values["normalisation"], "norm_std": m.errors["normalisation"]}
-                
+                self.objects[i].compoM_MW["model_flux"] = smc(self.objects[i].wave, self.objects[i].compoM_MW["z"], self.objects[i].compoM_MW["AB"], self.objects[i].compoM_MW["norm"])
+            if self.webui==True:
+                self.inline_text=f"Running quasar composite model fitting with {param} parameters"
+                self.progress_text=f"{num}/{len(self.SNAQS_list)}"
             if plot==True:
                 self.objects[i].plot_compoM(param_type=param)
                 
     def xpca_classification(self, plot=True):
-        for i in tqdm(self.SNAQS_list):
+        if self.webui==True:
+            self.inline_text="Running xPCA classification"
+            self.progress_text=f"/{len(self.SNAQS_list)}"
+        for num,i in tqdm(enumerate(self.SNAQS_list)):
             try:
                 if i[-3:]=="dat":
                     self.objects[i].data.to_csv("{}/temp_data.csv".format(os.getcwd()))
@@ -409,7 +423,7 @@ class SNAQS():
                 hdu = fits.open("{}/temp".format(os.getcwd()))
                 
                 ###### IMPORTANT: Calculating OWN CHI2 HERE, not the one PROVIDED FROM XPCA!!! (Also rescaling the flux values to the ones provided by the target wavelength)
-                rescaled_flux = spectres(self.objects[i].wave, model_data["wave"].values, model_data["flux"].values)
+                rescaled_flux = spectres_numba(self.objects[i].wave, model_data["wave"].values, model_data["flux"].values)
                 #rescaled_flux = np.interp(self.objects[i].wave, model_data["wave"].values, model_data["flux"].values)
                 mask = ~np.isnan(rescaled_flux)
                 chi2_val = np.sum((self.objects[i].flux[mask]-rescaled_flux[mask])**2/self.objects[i].error[mask]**2)
@@ -422,20 +436,35 @@ class SNAQS():
                 os.remove("{}/xpca_bestfit_model_temp.csv".format(os.getcwd()))
                 if i[-3:]=="dat":
                     os.remove("{}/temp_data.csv".format(os.getcwd()))
+                if self.webui==True:
+                    self.progress_text=f"{num}/{len(self.SNAQS_list)}"
             except:
-                print("FAILED - Classification of object {} failed either due to XPCA software or due to the FITS/DAT file itself - setting output to NaN".format(i))
+                text = "FAILED - Classification of object {} failed either due to XPCA software or due to the FITS/DAT file itself - setting output to NaN".format(i)
+                print(text)
                 self.objects[i].xpca = {"zBest": np.nan, "zBestErr": np.nan, "zBestChi2": np.nan, "zBestType": np.nan, "zBestSubType": np.nan}
+                if self.webui==True:
+                    self.inline_text=text
+                    self.progress_text=f"{num}/{len(self.SNAQS_list)}"
     
     def stellar_classification(self, plot=True):
+        if self.webui==True:
+            self.inline_text="Loading stellar templates..."
+            self.progress_text=f"/{len(self.SNAQS_list)}"
         print("Loading stellar templates...")
         try:
             template_list = os.listdir("templates/")
             template_list += os.listdir("templates_SB2/")
         except:
-            print("Cannot load stellar templates (templates/ and templates_SB2/) - check that the folders exist and contain the templates needed!")
+            text = "Cannot load stellar templates (templates/ and templates_SB2/) - check that the folders exist and contain the templates needed!"
+            if self.webui==True:
+                self.inline_text=text
+            print(text)
             return
         
-        for i in tqdm(self.SNAQS_list):
+        if self.webui==True:
+            self.inline_text="Running stellar classification by template fitting"
+
+        for num,i in tqdm(enumerate(self.SNAQS_list)):
             chi2_list = []
             norm_list = []
             for spect_file in template_list:
@@ -447,7 +476,6 @@ class SNAQS():
                         
                     temp_wave = 10**hdu_temp[1].data["loglam"]
                     temp_flux = hdu_temp[1].data["flux"]
-                    #temp_flux_rescale = spectres(self.objects[i].wave, temp_wave, temp_flux)
                     temp_flux_rescale = np.interp(self.objects[i].wave, temp_wave, temp_flux)
                     
                     norm_guess = np.mean(self.objects[i].flux)/np.mean(temp_flux)
@@ -466,8 +494,23 @@ class SNAQS():
                 except:
                     chi2_list.append(np.inf)
             self.objects[i].stellar_classification = {"Template_file": template_list[np.argmin(chi2_list)], "Chi2": np.min(chi2_list)}
+
+            try:
+                hdu_temp = fits.open("templates/" + self.objects[i].stellar_classification["Template_file"])
+            except:
+                hdu_temp = fits.open("templates_SB2/" + self.objects[i].stellar_classification["Template_file"])
+
+            temp_flux = hdu_temp[1].data["flux"]
+            temp_wave = 10**hdu_temp[1].data["loglam"]
+            #temp_flux_rescale = spectres(self.wave, temp_wave, temp_flux)
+            temp_flux_rescale = np.interp(self.objects[i].wave, temp_wave, temp_flux)
+            self.objects[i].stellar_classification["model_flux"] = norm_list[np.argmin(chi2_list)]*temp_flux_rescale
+            hdu_temp.close()
+
             if ~np.isinf(np.min(chi2_list)) and plot==True:
-                self.objects[i].plot_stellar(norm_list[np.argmin(chi2_list)])
+                self.objects[i].plot_stellar()
+            if self.webui==True:
+                self.progress_text=f"{num}/{len(self.SNAQS_list)}"
                 
     def local_outlier_detection(self, wave_points=2000, n_neighbors=15, plot=True, fit_continuum=True, num_outliers=5, plot_failed_LOF=True):
         '''Outlier detection function that utilizes the Local Outlier Factor from sklearn. Wave_points determines the length of the array for the shared wavelength region for all spectra, which will then be applied to all spectra using the SpectRes package (default: 4000). 
@@ -481,9 +524,13 @@ class SNAQS():
 
         pd_data = pd.DataFrame(np_arr, columns=wave_lin)
         
+        if self.webui==True:
+            self.inline_text="Starting outlier detection using Local Outlier Factor"
+            self.progress_text=f"/{len(self.SNAQS_list)}"
+
         for i, name in tqdm(enumerate(self.SNAQS_list)):
             flux_interp = spectres(wave_lin, self.objects[name].wave, self.objects[name].flux)
-            #flux_interp = np.interp(wave_lin, self.objects[name].wave, self.objects[name].flux)
+
             flux_interp /= np.mean(flux_interp)
             if fit_continuum==True:
                 try:
@@ -497,6 +544,8 @@ class SNAQS():
                 except:
                     print("Fitting continuum model failed - flux will be unnormalised.")
             pd_data.iloc[i] = flux_interp
+            if self.webui==True:
+                self.progress_text=f"{i}/{len(self.SNAQS_list)}"
 
         raw_data = pd_data
         pd_data = pd_data[~np.isinf(pd_data)]
@@ -689,7 +738,7 @@ class SNAQS():
             self.outlier_values = np_arr
         
         type_list, subtype_list, chi2_list, method_list, z_list, z_list_err = [], [], [], [], [], []
-        export_data = {"Object_name": self.SNAQS_list, "RA": self.RA_list, "Dec": self.DEC_list, "GAIA_ID": self.GAIA_ID_list, "Type": [], "Subtype": [], "Method": [], "Chi2": [], "z": [], "z_std": [], "AB": [], "AB_std": [], "LOF_val": self.outlier_values, "SDSS-u": self.SDSS_u_list, "err_SDSS-u": self.err_SDSS_u_list, "SDSS-g": self.SDSS_g_list, "err_SDSS-g": self.err_SDSS_g_list, "SDSS-r": self.SDSS_r_list, "err_SDSS-r": self.err_SDSS_r_list, "SDSS-i": self.SDSS_i_list, "err_SDSS-i": self.err_SDSS_i_list, "SDSS-z": self.SDSS_z_list, "err_SDSS-z": self.err_SDSS_z_list, "UKIDSS_Y": self.UKIDSS_Y_list, "err_UKIDSS_Y": self.err_UKIDSS_Y_list, "UKIDSS_J": self.UKIDSS_J_list, "err_UKIDSS_J": self.err_UKIDSS_J_list, "UKIDSS_H": self.UKIDSS_H_list, "err_UKIDSS_H": self.err_UKIDSS_H_list, "UKIDSS_K": self.UKIDSS_K_list, "err_UKIDSS_K": self.err_UKIDSS_K_list, "2MASS_J": self.twoMASS_J_list, "err_2MASS_J": self.err_twoMASS_J_list, "2MASS_H": self.twoMASS_H_list, "err_2MASS_H": self.err_twoMASS_H_list, "2MASS_K": self.twoMASS_K_list, "err_2MASS_K": self.err_twoMASS_K_list, "WISE_W1": self.WISE_W1_list, "err_WISE_W1": self.err_WISE_W1_list, "WISE_W2": self.WISE_W2_list, "err_WISE_W2": self.err_WISE_W2_list, "WISE_W3": self.WISE_W3_list, "err_WISE_W3": self.err_WISE_W3_list, "WISE_W4": self.WISE_W4_list, "err_WISE_W4": self.err_WISE_W4_list}
+        export_data = {"Object_name": self.SNAQS_list, "RA": self.RA_list, "Dec": self.DEC_list, "GAIA_ID": self.GAIA_ID_list, "Type": [], "Subtype": [], "Method": [], "Chi2": [], "z": [], "z_std": [], "AB": [], "AB_std": [], "compoM_AB": [], "compoM_AB_std": [], "best_compoM_extinct_params": [], "best_compoM_Chi2": [], "LOF_val": self.outlier_values, "SDSS-u": self.SDSS_u_list, "err_SDSS-u": self.err_SDSS_u_list, "SDSS-g": self.SDSS_g_list, "err_SDSS-g": self.err_SDSS_g_list, "SDSS-r": self.SDSS_r_list, "err_SDSS-r": self.err_SDSS_r_list, "SDSS-i": self.SDSS_i_list, "err_SDSS-i": self.err_SDSS_i_list, "SDSS-z": self.SDSS_z_list, "err_SDSS-z": self.err_SDSS_z_list, "UKIDSS_Y": self.UKIDSS_Y_list, "err_UKIDSS_Y": self.err_UKIDSS_Y_list, "UKIDSS_J": self.UKIDSS_J_list, "err_UKIDSS_J": self.err_UKIDSS_J_list, "UKIDSS_H": self.UKIDSS_H_list, "err_UKIDSS_H": self.err_UKIDSS_H_list, "UKIDSS_K": self.UKIDSS_K_list, "err_UKIDSS_K": self.err_UKIDSS_K_list, "2MASS_J": self.twoMASS_J_list, "err_2MASS_J": self.err_twoMASS_J_list, "2MASS_H": self.twoMASS_H_list, "err_2MASS_H": self.err_twoMASS_H_list, "2MASS_K": self.twoMASS_K_list, "err_2MASS_K": self.err_twoMASS_K_list, "WISE_W1": self.WISE_W1_list, "err_WISE_W1": self.err_WISE_W1_list, "WISE_W2": self.WISE_W2_list, "err_WISE_W2": self.err_WISE_W2_list, "WISE_W3": self.WISE_W3_list, "err_WISE_W3": self.err_WISE_W3_list, "WISE_W4": self.WISE_W4_list, "err_WISE_W4": self.err_WISE_W4_list}
         for i in tqdm(self.SNAQS_list):
             chi2_best_idx = np.argmin([self.objects[i].compoM_SMC["chi2"], self.objects[i].compoM_LMC["chi2"], self.objects[i].compoM_MW["chi2"], self.objects[i].xpca["zBestChi2"], self.objects[i].stellar_classification["Chi2"]])
             if chi2_best_idx==0:
@@ -701,6 +750,12 @@ class SNAQS():
                 export_data["z_std"].append(self.objects[i].compoM_SMC["z_std"])
                 export_data["AB"].append(self.objects[i].compoM_SMC["AB"])
                 export_data["AB_std"].append(self.objects[i].compoM_SMC["AB_std"])
+
+                export_data["compoM_AB"].append(self.objects[i].compoM_SMC["AB"])
+                export_data["compoM_AB_std"].append(self.objects[i].compoM_SMC["AB_std"])
+                export_data["best_compoM_extinct_params"].append("SMC")
+                export_data["best_compoM_Chi2"].append(self.objects[i].compoM_SMC["chi2"])
+
             elif chi2_best_idx==1:
                 export_data["Type"].append("QSO")
                 export_data["Subtype"].append(np.nan)
@@ -710,6 +765,11 @@ class SNAQS():
                 export_data["z_std"].append(self.objects[i].compoM_LMC["z_std"])
                 export_data["AB"].append(self.objects[i].compoM_LMC["AB"])
                 export_data["AB_std"].append(self.objects[i].compoM_LMC["AB_std"])
+
+                export_data["compoM_AB"].append(self.objects[i].compoM_LMC["AB"])
+                export_data["compoM_AB_std"].append(self.objects[i].compoM_LMC["AB_std"])
+                export_data["best_compoM_extinct_params"].append("LMC")
+                export_data["best_compoM_Chi2"].append(self.objects[i].compoM_LMC["chi2"])
             elif chi2_best_idx==2:
                 export_data["Type"].append("QSO")
                 export_data["Subtype"].append(np.nan)
@@ -719,7 +779,13 @@ class SNAQS():
                 export_data["z_std"].append(self.objects[i].compoM_MW["z_std"])
                 export_data["AB"].append(self.objects[i].compoM_MW["AB"])
                 export_data["AB_std"].append(self.objects[i].compoM_MW["AB_std"])
+
+                export_data["compoM_AB"].append(self.objects[i].compoM_MW["AB"])
+                export_data["compoM_AB_std"].append(self.objects[i].compoM_MW["AB_std"])
+                export_data["best_compoM_extinct_params"].append("MW")
+                export_data["best_compoM_Chi2"].append(self.objects[i].compoM_MW["chi2"])
             elif chi2_best_idx==3:
+                compoM_best_idx = np.argmin([self.objects[i].compoM_SMC["chi2"], self.objects[i].compoM_LMC["chi2"], self.objects[i].compoM_MW["chi2"]])
                 try:
                     export_data["Type"].append(self.objects[i].xpca["zBestType"][0])
                     export_data["Subtype"].append(self.objects[i].xpca["zBestSubType"][0])
@@ -734,18 +800,48 @@ class SNAQS():
                 export_data["Method"].append("xPCA")
                 export_data["AB"].append(np.nan)
                 export_data["AB_std"].append(np.nan)
+                if self.objects[i].xpca["zBestType"]=="QSO": ####Gives us the option to use the reddening that comes from the composite model, since xPCA (at the moment) does not provide reddening parameters itself.
+                    if compoM_best_idx==0:
+                        export_data["compoM_AB"].append(self.objects[i].compoM_SMC["AB"])
+                        export_data["compoM_AB_std"].append(self.objects[i].compoM_SMC["AB_std"])
+                        export_data["best_compoM_extinct_params"].append("SMC")
+                        export_data["best_compoM_Chi2"].append(self.objects[i].compoM_SMC["chi2"])
+                    elif compoM_best_idx==1:
+                        export_data["compoM_AB"].append(self.objects[i].compoM_LMC["AB"])
+                        export_data["compoM_AB_std"].append(self.objects[i].compoM_LMC["AB_std"])
+                        export_data["best_compoM_extinct_params"].append("LMC")
+                        export_data["best_compoM_Chi2"].append(self.objects[i].compoM_LMC["chi2"])
+                    elif compoM_best_idx==2:
+                        export_data["compoM_AB"].append(self.objects[i].compoM_MW["AB"])
+                        export_data["compoM_AB_std"].append(self.objects[i].compoM_MW["AB_std"])
+                        export_data["best_compoM_extinct_params"].append("MW")
+                        export_data["best_compoM_Chi2"].append(self.objects[i].compoM_MW["chi2"])
+                else:
+                        export_data["compoM_AB"].append(np.nan)
+                        export_data["compoM_AB_std"].append(np.nan)
+                        export_data["best_compoM_extinct_params"].append(np.nan)
+                        export_data["best_compoM_Chi2"].append(np.nan)
             elif chi2_best_idx==4:
                 export_data["Type"].append("STAR")
                 export_data["Subtype"].append(self.objects[i].stellar_classification["Template_file"][:-5])
                 export_data["Chi2"].append(self.objects[i].stellar_classification["Chi2"])
-                export_data["Method"].append("PyHammer")
+                export_data["Method"].append("Stellar template fitting")
                 export_data["z"].append(np.nan)
                 export_data["z_std"].append(np.nan)
                 export_data["AB"].append(np.nan)
                 export_data["AB_std"].append(np.nan)
-            
-        pd.DataFrame(export_data).to_csv(os.path.join(export_path, filename + ".csv"), index=False)
+                export_data["compoM_AB"].append(np.nan)
+                export_data["compoM_AB_std"].append(np.nan)
+                export_data["best_compoM_extinct_params"].append(np.nan)
+                export_data["best_compoM_Chi2"].append(np.nan)
+        #print([len(export_data[i]) for i in export_data.keys()])
+        self.export_df = pd.DataFrame(export_data)
+        self.export_df.to_csv(os.path.join(export_path, filename + ".csv"), index=False)
         print("##### EXPORT COMPLETED! #####")
+
+        if self.webui==True:
+            self.inline_text="Classification complete"
+            self.progress_text=f"{len(self.SNAQS_list)}/{len(self.SNAQS_list)}"
         
         if analysis==True:
             print("#### Conducting analysis ####")
