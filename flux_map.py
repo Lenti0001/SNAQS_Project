@@ -10,12 +10,12 @@ overlay_lines=True
 with open("AllSpectra_obj.pkl", "rb") as f:
     batch = dill.load(f)
 
-df = pd.read_csv("Full_run_export_ALL.csv")
+df = pd.read_csv("Full_run_export_SNAQS.csv")
 df.sort_values(by="z", inplace=True)
 
 norm_flux_list, wave_list = [], []
 z_list = df["z"].values
-for i in df["Object_name"]:
+for i in df["Filename"]:
     norm_flux_list.append(batch.objects[i].flux/np.median(batch.objects[i].flux))
     wave_list.append(batch.objects[i].wave)
 
@@ -46,5 +46,8 @@ if overlay_lines==True:
     plot_emission_lines(4340, "Hγ")
     plot_emission_lines(4861, "Hβ")
 plt.ylabel("Object number [A.U.]")
-plt.savefig("Extra_analysis/flux_map_overlayed.pdf")
+if overlay_lines==True:
+    plt.savefig("Extra_analysis/flux_map_overlayed.pdf")
+else:
+    plt.savefig("Extra_analysis/flux_map.pdf")
 plt.close()

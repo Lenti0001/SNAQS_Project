@@ -8,17 +8,23 @@ Created on Mon Aug 18 17:31:46 2025
 from dash import Dash, html, dcc, Input, Output, callback, State
 from dash.exceptions import PreventUpdate
 
+
+###Plotting and data acquisition packages###
 import pandas as pd
 import numpy as np
 from astropy.io import fits
 
+###Interactive plotting
 import plotly.express as px
 import plotly.graph_objects as go
+
+###SDSS image retrieval
+from sdss import Region
 
 import os
 import dill
 
-from main_script import SNAQS
+from SNAQStools import SNAQS
 
 from helper_functions import find_decimal_point as f_n
 
@@ -32,6 +38,9 @@ app = Dash()
 df = pd.DataFrame({"LOF_val":[]})
 #fig = px.scatter(df, x="RA", y="Dec", color="Type", labels={"RA": "Right Ascension [A.U.]", "Dec": "Declination [A.U.]"}, hover_data=["Object_name", "GAIA_ID", "Subtype", "z"], height=1200)
 fig = px.scatter(x=None, y=None)
+
+fig.update_layout(clickmode='event+select')
+
 fig2 = px.line(x=None, y=None)
 fig3 = px.line(x=None, y=None)
 batch = None
@@ -58,7 +67,7 @@ app.layout = html.Div(children=[
         ], style={"width": "19%", "float": "left", "display": "inline-block"}),
     html.Div(children=[
         dcc.Dropdown(
-            ["g-r (SDSS) vs. J-K (UKIDSS)", "g-r (SDSS) vs. u-g (SDSS)", "g-J (SDSS/UKIDSS) vs. J-K (UKIDSS)", "W1-W2 (WISE) vs. W2-W3 (WISE)", "W1-W2 (WISE) vs. J-K (UKIDSS)", "g-r (SDSS) vs. G (GAIA)", "u-g (SDSS) vs. G (GAIA)", "J-K (UKIDSS) vs. G (GAIA)", "Right Ascension vs. Declination"],
+            ["g-r (SDSS) vs. J-K (UKIDSS)", "g-r (SDSS) vs. u-g (SDSS)", "g-J (SDSS/UKIDSS) vs. J-K (UKIDSS)", "W1-W2 (WISE) vs. W2-W3 (WISE)", "W1-W2 (WISE) vs. J-K (UKIDSS)", "g-r (SDSS) vs. G (GAIA)", "u-g (SDSS) vs. G (GAIA)", "J-K (UKIDSS) vs. G (GAIA)", "Right Ascension vs. Declination", "Chi2 vs. σ(res)", "Chi2 vs. µ(res)", "(µ-σ)(res) vs. σ(res)"],
             "Right Ascension vs. Declination",
             id='main_plot_selector',
             ),
@@ -82,10 +91,15 @@ app.layout = html.Div(children=[
         html.Div(children=f'''
         Range of local outlier factor
         '''),
-        dcc.Input(id='input-min-LOF', type='text', value=f'{df["LOF_val"].min()}'),
-        dcc.Input(id='input-max-LOF', type='text', value=f'{df["LOF_val"].max()}'),
+        dcc.Input(id='input-min-LOF', type='text', value=""),
+        dcc.Input(id='input-max-LOF', type='text', value=""),
         html.Br(),
         html.Button(id='submit-states', n_clicks=0, children='Reload plots'),
+        html.Br(),
+        html.Div(children=['''Display errorbars?''',
+                           dcc.RadioItems(id="errorbar-toggle", options=["Yes", "No"], value="No", inline=True)]
+                           ),
+        html.Br(),
         dcc.Graph(
             id='Main-graph',
             figure=fig,
@@ -103,11 +117,25 @@ app.layout = html.Div(children=[
             id='Analysis-graph',
             figure=fig3
         ),
-        html.H4(children='Object Spectrum', style={"textAlign": "center"}),
+        html.H3(children='Visual Classification Menu', style={"textAlign": "center"}),
         html.Br(),
-        html.H4('Select a best-fit  template to plot alongside the flux (Note: only works if pipeline has been completed on this interface)', style={"textAlign": "center"}),
+        html.Div(children=["Type",
+        dcc.Dropdown(["QSO", "BAL_QSO", "GALAXY", "STAR", "UNKNOWN", "MISSING_FLUX"], "UNKNOWN", id="type-selector")
+        ], style={"width": "20%", "display": "inline-block"}),
+        html.Div(children=["Method",
+        dcc.Dropdown(["xPCA", "CompoM SMC", "CompoM LMC", "CompoM MW", "Stellar", "Custom"], "Custom", id="method-selector")
+        ], style={"width": "20%", "display": "inline-block"}),
+        html.Div(children=["Subtype (Write None if not known/not specified.)", dcc.Input(id="subtype-input", type="text", value="None", style={"height": 33})
+        ], style={"width": "30%"}),
         html.Br(),
-        dcc.RadioItems(id="template-selection", options=["None", "xPCA", "CompoM LMC", "CompoM SMC", "CompoM MW", "Stellar classification"], value="None", inline=True, style={"textAlign": "center"}),
+        html.Button(id="set_class", n_clicks=0, children="Set/correct classification", style={"height": 30, "width": "20%", "textAlign": "center", "font-size": 18}),
+        html.Br(),
+        "Is this a BAL QSO?",
+        dcc.RadioItems(id="bal-qso", options=["Yes", "No"], value="No", inline=True),
+        html.Br(),
+        html.H4('Select a best-fit  template to plot alongside the flux', style={"textAlign": "center"}),
+        html.Br(),
+        dcc.RadioItems(id="template-selection", options=["None", "xPCA", "CompoM LMC", "CompoM SMC", "CompoM MW", "Stellar classification", "SDSS Image Viewer"], value="None", inline=True, style={"textAlign": "center"}),
         dcc.Graph(
             id='Object-spectrum',
             figure=fig2
@@ -320,6 +348,9 @@ def update_SNAQS_save(num, button_state):
 def save_SNAQS_object(n_clicks, filename):
     global batch
 
+    if batch==None:
+        raise PreventUpdate
+
     if n_clicks>0:
         if batch==None:
             return ['''Failed to save SNAQS object - object is empty!''']
@@ -332,6 +363,7 @@ def save_SNAQS_object(n_clicks, filename):
             return [f'''Successfully saved SNAQS object: {filename} - it can now be loaded from file!''']
     else:
         return None
+
 
 @callback(
     Output("load-object-output", "children"),
@@ -360,6 +392,7 @@ def load_SNAQS_object(n_clicks, filename_obj):
     Output("Main-graph", "figure"),
     Input("main_plot_selector", "value"),
     Input("submit-states", "n_clicks"),
+    Input("errorbar-toggle", "value"),
     State('input-zmin-state', "value"),
     State('input-zmax-state', "value"),
     State('input-min-err-y-state', "value"),
@@ -368,16 +401,24 @@ def load_SNAQS_object(n_clicks, filename_obj):
     State('input-max-err-x-state', "value"),
     State('input-min-LOF', "value"),
     State('input-max-LOF', "value"),
-    State('export-data-path', "value"),
+    State('export-data-path', "value")
     )
-def update_main_plot(plot_type, n_clicks, zmin, zmax, min_err_y, max_err_y, min_err_x, max_err_x, min_LOF, max_LOF, df_path):
+def update_main_plot(plot_type, n_clicks, errorbar_toggle, zmin, zmax, min_err_y, max_err_y, min_err_x, max_err_x, min_LOF, max_LOF, df_path):
     global df, batch
     try:
         df = pd.read_csv(df_path)
+        df=df[df['GAIA_ID'].isnull() | ~df[df['GAIA_ID'].notnull()].duplicated(subset='GAIA_ID',keep='first')]
+        if "visual_classification" not in df.columns:
+                df["visual_classification"] = np.zeros(len(df))
         batch=None
     except:
         try:
-            df = batch.export_df
+            #df = batch.export_df
+            extended_list = batch.total_list + pd.Series(batch.SNAQS_list)[[i[-4:]!="fits" for i in batch.SNAQS_list]].to_list()
+            df = batch.generate_export_data(extended_list)
+            df=df[df['GAIA_ID'].isnull() | ~df[df['GAIA_ID'].notnull()].duplicated(subset='GAIA_ID',keep='first')]
+            if "visual_classification" not in df.columns:
+                df["visual_classification"] = np.zeros(len(df))
         except:
             raise PreventUpdate
 
@@ -399,11 +440,7 @@ def update_main_plot(plot_type, n_clicks, zmin, zmax, min_err_y, max_err_y, min_
     W2W3 = filtered_df["WISE_W2"]-filtered_df["WISE_W3"]
     W1W2 = filtered_df["WISE_W1"]-filtered_df["WISE_W2"]
     gJ = filtered_df["SDSS-g"]-filtered_df["UKIDSS_J"]
-    try:
-        G = filtered_df["phot_g_mean_mag"]
-    except:
-        G = np.empty(len(filtered_df))
-        G[:] = np.nan
+    G = filtered_df["GAIA_Gmag"]
 
     err_JK = (filtered_df["err_UKIDSS_J"]**2+filtered_df["err_UKIDSS_K"]**2)**0.5
     err_gr = (filtered_df["err_SDSS-g"]**2+filtered_df["err_SDSS-r"]**2)**0.5
@@ -412,34 +449,100 @@ def update_main_plot(plot_type, n_clicks, zmin, zmax, min_err_y, max_err_y, min_
     err_W1W2 = (filtered_df["err_WISE_W1"]**2+filtered_df["err_WISE_W2"]**2)**0.5
     err_gJ = (filtered_df["err_SDSS-g"]**2+filtered_df["err_UKIDSS_J"]**2)**0.5
 
+    custom_data_list = ["Filename"]
+    hover_data_list = ["Object_name", "GAIA_ID", "Subtype", "z", "GAIA_Gmag", "LOF_val", "visual_classification"]
+
     if plot_type=="Right Ascension vs. Declination":
-        fig = px.scatter(filtered_df, x="RA", y="Dec", color="Type", labels={"RA": "Right Ascension [A.U.]", "Dec": "Declination [A.U.]"}, hover_data=["LOF_val", "Object_name", "GAIA_ID", "Subtype", "z"], height=1200)
+        fig = px.scatter(filtered_df, x="RA", y="Dec", color="Type", labels={"RA": "Right Ascension [A.U.]", "Dec": "Declination [A.U.]"}, hover_data=hover_data_list, custom_data=custom_data_list, height=1200)
     elif plot_type=="g-r (SDSS) vs. J-K (UKIDSS)":
         mask = (float(min_err_x)<np.abs(err_JK)) & (np.abs(err_JK)<float(max_err_x)) & (float(min_err_y)<np.abs(err_gr)) & (np.abs(err_gr)<float(max_err_y))
-        fig = px.scatter(filtered_df[mask], x=JK[mask], y=gr[mask], error_x=err_JK[mask], error_y=err_gr[mask], color="Type", labels={"x": "J-K (UKIDSS) [A.U.]", "y": "g-r (SDSS) [A.U.]"}, hover_data=["LOF_val", "Object_name", "GAIA_ID", "Subtype", "z"], height=1200)
+        if errorbar_toggle=="Yes":
+            fig = px.scatter(filtered_df[mask], x=JK[mask], y=gr[mask], error_x=err_JK[mask], error_y=err_gr[mask], color="Type", labels={"x": "J-K (UKIDSS) [A.U.]", "y": "g-r (SDSS) [A.U.]"}, hover_data=hover_data_list, custom_data=custom_data_list, height=1200)
+        elif errorbar_toggle=="No":
+            fig = px.scatter(filtered_df[mask], x=JK[mask], y=gr[mask], color="Type", labels={"x": "J-K (UKIDSS) [A.U.]", "y": "g-r (SDSS) [A.U.]"}, hover_data=hover_data_list, custom_data=custom_data_list, height=1200)
     elif plot_type=="g-r (SDSS) vs. u-g (SDSS)":
         mask = (float(min_err_x)<np.abs(err_ug)) & (err_ug<float(max_err_x)) & (float(min_err_y)<np.abs(err_gr)) & (np.abs(err_gr)<float(max_err_y))
-        fig = px.scatter(filtered_df[mask], x=ug[mask], y=gr[mask], error_x=err_ug[mask], error_y=err_gr[mask], color="Type", labels={"x": "u-g (SDSS) [A.U.]", "y": "g-r (SDSS) [A.U.]"}, hover_data=["LOF_val", "Object_name", "GAIA_ID", "Subtype", "z"], height=1200)
+        if errorbar_toggle=="Yes":
+            fig = px.scatter(filtered_df[mask], x=ug[mask], y=gr[mask], error_x=err_ug[mask], error_y=err_gr[mask], color="Type", labels={"x": "u-g (SDSS) [A.U.]", "y": "g-r (SDSS) [A.U.]"}, hover_data=hover_data_list, custom_data=custom_data_list, height=1200)
+        elif errorbar_toggle=="No":
+            fig = px.scatter(filtered_df[mask], x=ug[mask], y=gr[mask], color="Type", labels={"x": "u-g (SDSS) [A.U.]", "y": "g-r (SDSS) [A.U.]"}, hover_data=hover_data_list, custom_data=custom_data_list, height=1200)
     elif plot_type=="W1-W2 (WISE) vs. W2-W3 (WISE)":
         mask = (float(min_err_x)<np.abs(err_W2W3)) & (np.abs(err_W2W3)<float(max_err_x)) & (float(min_err_y)<np.abs(err_W1W2)) & (np.abs(err_W1W2)<float(max_err_y))
-        fig = px.scatter(filtered_df[mask], x=W2W3[mask], y=W1W2[mask], error_x=err_W2W3[mask], error_y=err_W1W2[mask], color="Type", labels={"x": "W2-W3 (WISE) [A.U.]", "y": "W1-W2 (WISE) [A.U.]"}, hover_data=["LOF_val", "Object_name", "GAIA_ID", "Subtype", "z"], height=1200)
+        if errorbar_toggle=="Yes":
+            fig = px.scatter(filtered_df[mask], x=W2W3[mask], y=W1W2[mask], error_x=err_W2W3[mask], error_y=err_W1W2[mask], color="Type", labels={"x": "W2-W3 (WISE) [A.U.]", "y": "W1-W2 (WISE) [A.U.]"}, hover_data=hover_data_list, custom_data=custom_data_list, height=1200)
+        elif errorbar_toggle=="No":
+            fig = px.scatter(filtered_df[mask], x=W2W3[mask], y=W1W2[mask], color="Type", labels={"x": "W2-W3 (WISE) [A.U.]", "y": "W1-W2 (WISE) [A.U.]"}, hover_data=hover_data_list, custom_data=custom_data_list, height=1200)
     elif plot_type=="g-J (SDSS/UKIDSS) vs. J-K (UKIDSS)":
         mask = (float(min_err_x)<np.abs(err_JK)) & (np.abs(err_JK)<float(max_err_x)) & (float(min_err_y)<np.abs(err_gJ)) & (np.abs(err_gJ)<float(max_err_y))
-        fig = px.scatter(filtered_df[mask], x=JK[mask], y=gJ[mask], error_x=err_JK[mask], error_y=err_gJ[mask], color="Type", labels={"x": "J-K (UKIDSS) [A.U.]", "y": "g-J (SDSS/UKIDSS) [A.U.]"}, hover_data=["LOF_val", "Object_name", "GAIA_ID", "Subtype", "z"], height=1200)
+        if errorbar_toggle=="Yes":
+            fig = px.scatter(filtered_df[mask], x=JK[mask], y=gJ[mask], error_x=err_JK[mask], error_y=err_gJ[mask], color="Type", labels={"x": "J-K (UKIDSS) [A.U.]", "y": "g-J (SDSS/UKIDSS) [A.U.]"}, hover_data=hover_data_list, custom_data=custom_data_list, height=1200)
+        elif errorbar_toggle=="No":
+            fig = px.scatter(filtered_df[mask], x=JK[mask], y=gJ[mask], color="Type", labels={"x": "J-K (UKIDSS) [A.U.]", "y": "g-J (SDSS/UKIDSS) [A.U.]"}, hover_data=hover_data_list, custom_data=custom_data_list, height=1200)
     elif plot_type=="W1-W2 (WISE) vs. J-K (UKIDSS)":
         mask = (float(min_err_x)<np.abs(err_JK)) & (np.abs(err_JK)<float(max_err_x)) & (float(min_err_y)<np.abs(err_W1W2)) & (np.abs(err_W1W2)<float(max_err_y))
-        fig = px.scatter(filtered_df[mask], x=JK[mask], y=W1W2[mask], error_x=err_JK[mask], error_y=err_W1W2[mask], color="Type", labels={"x": "J-K (UKIDSS) [A.U.]", "y": "W1-W2 (WISE) [A.U.]"}, hover_data=["LOF_val", "Object_name", "GAIA_ID", "Subtype", "z"], height=1200)
+        if errorbar_toggle=="Yes":
+            fig = px.scatter(filtered_df[mask], x=JK[mask], y=W1W2[mask], error_x=err_JK[mask], error_y=err_W1W2[mask], color="Type", labels={"x": "J-K (UKIDSS) [A.U.]", "y": "W1-W2 (WISE) [A.U.]"}, hover_data=hover_data_list, custom_data=custom_data_list, height=1200)
+        elif errorbar_toggle=="No":
+            fig = px.scatter(filtered_df[mask], x=JK[mask], y=W1W2[mask], color="Type", labels={"x": "J-K (UKIDSS) [A.U.]", "y": "W1-W2 (WISE) [A.U.]"}, hover_data=hover_data_list, custom_data=custom_data_list, height=1200)
     elif plot_type=="g-r (SDSS) vs. G (GAIA)":
         mask = (float(min_err_y)<np.abs(err_gr)) & (np.abs(err_gr)<float(max_err_y))
-        fig = px.scatter(filtered_df[mask], x=G[mask], y=gr[mask], error_y=err_gr[mask], color="Type", labels={"x": "G (GAIA) [A.U.]", "y": "g-r (SDSS) [A.U.]"}, hover_data=["LOF_val", "Object_name", "GAIA_ID", "Subtype", "z"], height=1200)
+        if errorbar_toggle=="Yes":
+            fig = px.scatter(filtered_df[mask], x=G[mask], y=gr[mask], error_y=err_gr[mask], color="Type", labels={"x": "G (GAIA) [A.U.]", "y": "g-r (SDSS) [A.U.]"}, hover_data=hover_data_list, custom_data=custom_data_list, height=1200)
+        elif errorbar_toggle=="No":
+            fig = px.scatter(filtered_df[mask], x=G[mask], y=gr[mask], color="Type", labels={"x": "G (GAIA) [A.U.]", "y": "g-r (SDSS) [A.U.]"}, hover_data=hover_data_list, custom_data=custom_data_list, height=1200)
     elif plot_type=="u-g (SDSS) vs. G (GAIA)":
         mask = (float(min_err_y)<np.abs(err_ug)) & (np.abs(err_ug)<float(max_err_y))
-        fig = px.scatter(filtered_df[mask], x=G[mask], y=ug[mask], error_y=err_ug[mask], color="Type", labels={"x": "G (GAIA) [A.U.]", "y": "u-g (SDSS) [A.U.]"}, hover_data=["LOF_val", "Object_name", "GAIA_ID", "Subtype", "z"], height=1200)
+        if errorbar_toggle=="Yes":
+            fig = px.scatter(filtered_df[mask], x=G[mask], y=ug[mask], error_y=err_ug[mask], color="Type", labels={"x": "G (GAIA) [A.U.]", "y": "u-g (SDSS) [A.U.]"}, hover_data=hover_data_list, custom_data=custom_data_list, height=1200)
+        elif errorbar_toggle=="No":
+            fig = px.scatter(filtered_df[mask], x=G[mask], y=ug[mask], color="Type", labels={"x": "G (GAIA) [A.U.]", "y": "u-g (SDSS) [A.U.]"}, hover_data=hover_data_list, custom_data=custom_data_list, height=1200)
     elif plot_type=="J-K (UKIDSS) vs. G (GAIA)":
         mask = (float(min_err_y)<np.abs(err_JK)) & (np.abs(err_JK)<float(max_err_y))
-        fig = px.scatter(filtered_df[mask], x=G[mask], y=JK[mask], error_y=err_JK[mask], color="Type", labels={"x": "G (GAIA) [A.U.]", "y": "J-K (UKIDSS) [A.U.]"}, hover_data=["LOF_val", "Object_name", "GAIA_ID", "Subtype", "z"], height=1200)
-    return fig
+        if errorbar_toggle=="Yes":
+            fig = px.scatter(filtered_df[mask], x=G[mask], y=JK[mask], error_y=err_JK[mask], color="Type", labels={"x": "G (GAIA) [A.U.]", "y": "J-K (UKIDSS) [A.U.]"}, hover_data=hover_data_list, custom_data=custom_data_list, height=1200)
+        elif errorbar_toggle=="No":
+            fig = px.scatter(filtered_df[mask], x=G[mask], y=JK[mask], color="Type", labels={"x": "G (GAIA) [A.U.]", "y": "J-K (UKIDSS) [A.U.]"}, hover_data=hover_data_list, custom_data=custom_data_list, height=1200)
+    elif plot_type=="Chi2 vs. σ(res)":
+        std_res_list = []
+        for i in filtered_df["Filename"]:
+            try:
+                model_flux = batch.objects[i].xpca["BestModel_flux"]
+                std_res_list.append(np.std(model_flux - batch.objects[i].flux))
+            except:
+                std_res_list.append(np.nan)
+        filtered_df["std_res"] = std_res_list
+        mask = (filtered_df["std_res"]<20) & (filtered_df["std_res"]>0) & (filtered_df["Chi2"]<1e6)
+        fig = px.scatter(filtered_df[mask], x="std_res", y="Chi2", color="Type", labels={"std_res": "σ of residual [A.U.]", "Chi2": "Chi2 of best-fit [A.U.]"}, hover_data=hover_data_list, custom_data=custom_data_list, height=1200)
+    elif plot_type=="Chi2 vs. µ(res)":
+        mean_res_list = []
+        for i in filtered_df["Filename"]:
+            try:
+                model_flux = batch.objects[i].xpca["BestModel_flux"]
+                mean_res_list.append(np.mean(model_flux - batch.objects[i].flux))
+            except:
+                mean_res_list.append(np.nan)
+        filtered_df["mean_res"] = mean_res_list
+        mask = (filtered_df["mean_res"]<5) & (filtered_df["mean_res"]>-5) & (filtered_df["Chi2"]<1e6)
+        fig = px.scatter(filtered_df[mask], x="mean_res", y="Chi2", color="Type", labels={"mean_res": "µ of residual [A.U.]", "Chi2": "Chi2 of best-fit [A.U.]"}, hover_data=hover_data_list, custom_data=custom_data_list, height=1200)
+    elif plot_type=="(µ-σ)(res) vs. σ(res)":
+        std_res_list, mean_minus_std_list = [], []
+        for i in filtered_df["Filename"]:
+            try:
+                model_flux = batch.objects[i].xpca["BestModel_flux"]
+                std_res = np.std(model_flux - batch.objects[i].flux)
+                mean_res = np.mean(model_flux - batch.objects[i].flux)
 
+                std_res_list.append(std_res)
+                mean_minus_std_list.append(mean_res-std_res)
+            except:
+                std_res_list.append(np.nan)
+                mean_minus_std_list.append(np.nan)
+        filtered_df["std_res"] = std_res_list
+        filtered_df["mean_minus_std"] = mean_minus_std_list
+        mask = (filtered_df["std_res"]<20) & (filtered_df["std_res"]>0) & (filtered_df["mean_minus_std"]<5) & (filtered_df["mean_minus_std"]>-5)
+        fig = px.scatter(filtered_df[mask], x="mean_minus_std", y="std_res", color="Type", labels={"mean_minus_std": "(µ-σ) of residual [A.U.]", "std_res": "σ of residual [A.U.]"}, hover_data=hover_data_list, custom_data=custom_data_list, height=1200)
+    fig.update_layout(clickmode='event+select')
+    return fig
 
 ####### Stuff related to object spectrum plot
 @callback(
@@ -454,7 +557,8 @@ def update_spectrum_plot(clickData, spectra_path, template_selected):
     if clickData==None:
         raise PreventUpdate
 
-    filename = clickData['points'][0]['customdata'][-4]
+    filename = clickData['points'][0]['customdata'][0]
+    name = clickData['points'][0]['customdata'][1]
     path = spectra_path
     if batch==None:
         if filename[-4:]=="fits":
@@ -484,14 +588,18 @@ def update_spectrum_plot(clickData, spectra_path, template_selected):
         wave = batch.objects[filename].wave
         flux = batch.objects[filename].flux
         error = batch.objects[filename].error
-        sub_export = batch.export_df[batch.export_df["Object_name"]==filename]
+        df_combined = pd.concat([batch.export_df, batch.export_df_SNAQS[[i[-4:]!="fits" for i in batch.export_df_SNAQS["Filename"]]]])
+        sub_export = df_combined[df_combined["Object_name"]==name]
         if np.mean(flux)<10**(-10):
-            fig2 = px.line(x=wave, y=flux, labels={"x": "Wavelength [Å]", "y": "Flux [erg/cm^(2)/s/Å]"})
-            fig2.update_layout(title=go.layout.Title(text=f"{filename} <br><sup>GAIA ID: {clickData['points'][0]['customdata'][-3]}</sup>"))
+            y_label = "Flux [erg/cm^(2)/s/Å]"
         else:
-            fig2 = px.line(x=wave, y=flux, labels={"x": "Wavelength [Å]", "y": "Flux [10^(-17) erg/cm^(2)/s/Å]"})
-            fig2.update_layout(title=go.layout.Title(text=f"{filename} <br><sup>GAIA ID: {clickData['points'][0]['customdata'][-3]}</sup>"))
+            y_label = "Flux [10^(-17) erg/cm^(2)/s/Å]"
+
+        fig2 = px.line(x=[np.median(wave)], y=[0], labels={"x": "Wavelength [Å]", "y": y_label})
+        fig2.add_trace(go.Scatter(x=wave, y=flux, name="Fluxdata", line=dict(color='rgba(0, 0, 255, 1)')))
+        fig2.update_layout(title=go.layout.Title(text=f"{filename} <br><sup>GAIA ID: {batch.objects[filename].GAIA_ID}</sup>"))
         fig2.add_trace(go.Scatter(x=wave,y=error, name="σ", line=dict(color='rgba(255, 0, 0, 1)')))
+
         if template_selected=="xPCA":
             model_flux = batch.objects[filename].xpca["BestModel_flux"]
             model_wave = batch.objects[filename].xpca["BestModel_wave"]
@@ -500,7 +608,7 @@ def update_spectrum_plot(clickData, spectra_path, template_selected):
             AB = sub_export["compoM_AB"].values[0]
             AB_std = sub_export["compoM_AB_std"].values[0]
 
-            fig2.update_layout(title=go.layout.Title(text=f"{filename} <br><sup>GAIA ID: {clickData['points'][0]['customdata'][-3]}  z: {np.round(z, f_n(z_std))} +/- {np.round(z_std, f_n(z_std))}  Chi2: {batch.objects[filename].xpca["zBestChi2"]}  <br>Type: {batch.objects[filename].xpca["zBestType"]}  Subtype: {batch.objects[filename].xpca["zBestSubType"]}  <br>### Reddening (source: best-fit composite model) ### <br> AB: {np.round(AB, f_n(AB_std))} +/- {np.round(AB_std, f_n(AB_std))}  <br> extinct params: {sub_export["best_compoM_extinct_params"].values[0]}  chi2_compoM: {sub_export["best_compoM_Chi2"].values[0]}</sup>", xref="paper", x=0))
+            fig2.update_layout(title=go.layout.Title(text=f"{filename} <br><sup>GAIA ID: {batch.objects[filename].GAIA_ID}  z: {np.round(z, f_n(z_std))} +/- {np.round(z_std, f_n(z_std))}  Chi2: {batch.objects[filename].xpca["zBestChi2"]}  <br>Type: {batch.objects[filename].xpca["zBestType"]}  Subtype: {batch.objects[filename].xpca["zBestSubType"]}  <br>### Reddening (source: best-fit composite model) ### <br> AB: {np.round(AB, f_n(AB_std))} +/- {np.round(AB_std, f_n(AB_std))}  <br> extinct params: {sub_export["best_compoM_extinct_params"].values[0]}  chi2_compoM: {sub_export["best_compoM_Chi2"].values[0]}</sup>", xref="paper", x=0))
             fig2.add_trace(go.Scatter(x=model_wave,y=model_flux, name="Best-fit xPCA model", line=dict(color='rgba(0, 255, 0, 1)')))
         elif template_selected=="CompoM LMC":
             model_flux = batch.objects[filename].compoM_LMC["model_flux"]
@@ -512,7 +620,7 @@ def update_spectrum_plot(clickData, spectra_path, template_selected):
             norm = batch.objects[filename].compoM_LMC["norm"]
             norm_std = batch.objects[filename].compoM_LMC["norm_std"]
 
-            fig2.update_layout(title=go.layout.Title(text=f"{filename} <br><sup>GAIA ID: {clickData['points'][0]['customdata'][-3]}  z: {np.round(z, f_n(z_std))} +/- {np.round(z_std, f_n(z_std))}  AB: {np.round(AB, f_n(AB_std))} +/-  {np.round(AB_std, f_n(AB_std))}  <br>Norm: {np.round(norm, f_n(norm_std))} +/-  {np.round(norm_std, f_n(norm_std))}  Chi2: {batch.objects[filename].compoM_LMC["chi2"]}  <br>Type: QSO</sup>", xref="paper", x=0))
+            fig2.update_layout(title=go.layout.Title(text=f"{filename} <br><sup>GAIA ID: {batch.objects[filename].GAIA_ID}  z: {np.round(z, f_n(z_std))} +/- {np.round(z_std, f_n(z_std))}  AB: {np.round(AB, f_n(AB_std))} +/-  {np.round(AB_std, f_n(AB_std))}  <br>Norm: {np.round(norm, f_n(norm_std))} +/-  {np.round(norm_std, f_n(norm_std))}  Chi2: {batch.objects[filename].compoM_LMC["chi2"]}  <br>Type: QSO</sup>", xref="paper", x=0))
             fig2.add_trace(go.Scatter(x=model_wave,y=model_flux, name="Best-fit Composite Model - LMC params", line=dict(color='rgba(0, 255, 0, 1)')))
         elif template_selected=="CompoM SMC":
             model_flux = batch.objects[filename].compoM_SMC["model_flux"]
@@ -524,7 +632,7 @@ def update_spectrum_plot(clickData, spectra_path, template_selected):
             norm = batch.objects[filename].compoM_SMC["norm"]
             norm_std = batch.objects[filename].compoM_SMC["norm_std"]
 
-            fig2.update_layout(title=go.layout.Title(text=f"{filename} <br><sup>GAIA ID: {clickData['points'][0]['customdata'][-3]}  z: {np.round(z, f_n(z_std))} +/- {np.round(z_std, f_n(z_std))}  AB: {np.round(AB, f_n(AB_std))} +/-  {np.round(AB_std, f_n(AB_std))}  <br>Norm: {np.round(norm, f_n(norm_std))} +/-  {np.round(norm_std, f_n(norm_std))}  Chi2: {batch.objects[filename].compoM_SMC["chi2"]}  <br>Type: QSO</sup>", xref="paper", x=0))
+            fig2.update_layout(title=go.layout.Title(text=f"{filename} <br><sup>GAIA ID: {batch.objects[filename].GAIA_ID}  z: {np.round(z, f_n(z_std))} +/- {np.round(z_std, f_n(z_std))}  AB: {np.round(AB, f_n(AB_std))} +/-  {np.round(AB_std, f_n(AB_std))}  <br>Norm: {np.round(norm, f_n(norm_std))} +/-  {np.round(norm_std, f_n(norm_std))}  Chi2: {batch.objects[filename].compoM_SMC["chi2"]}  <br>Type: QSO</sup>", xref="paper", x=0))
             fig2.add_trace(go.Scatter(x=model_wave,y=model_flux, name="Best-fit Composite Model - SMC params", line=dict(color='rgba(0, 255, 0, 1)')))
         elif template_selected=="CompoM MW":
             model_flux = batch.objects[filename].compoM_MW["model_flux"]
@@ -536,14 +644,172 @@ def update_spectrum_plot(clickData, spectra_path, template_selected):
             norm = batch.objects[filename].compoM_MW["norm"]
             norm_std = batch.objects[filename].compoM_MW["norm_std"]
 
-            fig2.update_layout(title=go.layout.Title(text=f"{filename} <br><sup>GAIA ID: {clickData['points'][0]['customdata'][-3]}  z: {np.round(z, f_n(z_std))} +/- {np.round(z_std, f_n(z_std))}  AB: {np.round(AB, f_n(AB_std))} +/-  {np.round(AB_std, f_n(AB_std))}  <br>Norm: {np.round(norm, f_n(norm_std))} +/-  {np.round(norm_std, f_n(norm_std))}  Chi2: {batch.objects[filename].compoM_MW["chi2"]}  <br>Type: QSO</sup>", xref="paper", x=0))
+            fig2.update_layout(title=go.layout.Title(text=f"{filename} <br><sup>GAIA ID: {batch.objects[filename].GAIA_ID}  z: {np.round(z, f_n(z_std))} +/- {np.round(z_std, f_n(z_std))}  AB: {np.round(AB, f_n(AB_std))} +/-  {np.round(AB_std, f_n(AB_std))}  <br>Norm: {np.round(norm, f_n(norm_std))} +/-  {np.round(norm_std, f_n(norm_std))}  Chi2: {batch.objects[filename].compoM_MW["chi2"]}  <br>Type: QSO</sup>", xref="paper", x=0))
             fig2.add_trace(go.Scatter(x=model_wave,y=model_flux, name="Best-fit Composite Model - MW params", line=dict(color='rgba(0, 255, 0, 1)')))
         elif template_selected=="Stellar classification":
             model_flux = batch.objects[filename].stellar_classification["model_flux"]
             model_wave = batch.objects[filename].wave
-            fig2.update_layout(title=go.layout.Title(text=f"{filename} <br><sup>GAIA ID: {clickData['points'][0]['customdata'][-3]}  Chi2: {batch.objects[filename].stellar_classification["Chi2"]}</sup>", xref="paper", x=0))
+            fig2.update_layout(title=go.layout.Title(text=f"{filename} <br><sup>GAIA ID: {batch.objects[filename].GAIA_ID}  Chi2: {batch.objects[filename].stellar_classification["Chi2"]}</sup>", xref="paper", x=0))
             fig2.add_trace(go.Scatter(x=model_wave,y=model_flux, name=f"Best-fit stellar template - {batch.objects[filename].stellar_classification["Template_file"]}", line=dict(color='rgba(0, 255, 0, 1)')))
+        elif template_selected=="SDSS Image Viewer":
+            ra = batch.objects[filename].RA
+            dec = batch.objects[filename].DEC
+            reg = Region(ra, dec, fov=0.03)
+            reg.download_data()
+            fig2 = px.imshow(reg.data)
         return fig2
+
+@callback(
+    Output("type-selector", "value"),
+    Input("Main-graph", "clickData")
+    )
+def update_type_selector(clickData):
+    global batch
+    if batch==None or clickData==None:
+        raise PreventUpdate
+    filename = clickData['points'][0]['customdata'][0]
+    return batch.objects[filename].Type
+
+@callback(
+    Output("bal-qso", "value"),
+    Input("Main-graph", "clickData")
+    )
+def update_bal_qso(clickData):
+    global batch
+    if batch==None or clickData==None:
+        raise PreventUpdate
+    filename = clickData['points'][0]['customdata'][0]
+    if batch.objects[filename].Type=="BAL_QSO":
+        return "Yes"
+    else:
+        return "No"
+
+@callback(
+    Output("method-selector", "value"),
+    Input("Main-graph", "clickData")
+    )
+def update_method_selector(clickData):
+    global batch
+    if batch==None or clickData==None:
+        raise PreventUpdate
+    filename = clickData['points'][0]['customdata'][0]
+    return batch.objects[filename].Method
+
+@callback(
+    Output("subtype-input", "value"),
+    Input("Main-graph", "clickData")
+    )
+def update_method_selector(clickData):
+    global batch
+    if batch==None or clickData==None:
+        raise PreventUpdate
+    filename = clickData['points'][0]['customdata'][0]
+    try:
+        if np.isnan(batch.objects[filename].Subtype)==True:
+            subtype="None"
+    except:
+        subtype=batch.objects[filename].Subtype
+    return subtype
+
+@callback(
+          Input("set_class", "n_clicks"),
+          State("Main-graph", "clickData"),
+          State("type-selector", "value"),
+          State("method-selector", "value"),
+          State("subtype-input", "value"),
+          State("bal-qso", "value")
+          )
+
+def set_new_class(n_clicks, clickData, set_type, set_method, set_subtype, BAL_QSO):
+    global df, batch
+
+    if batch==None:
+        raise PreventUpdate
+    print(BAL_QSO)
+    if BAL_QSO=="Yes":
+        set_type = "BAL_QSO"
+
+    i = clickData['points'][0]['customdata'][0]
+    replace_idx = df[df["Filename"]==i].index
+    df.loc[replace_idx, "visual_classification"] = 1
+    if set_method=="xPCA":
+        if hasattr(batch.objects[i], "xpca"):
+            batch.objects[i].Type = set_type
+            if set_subtype=="None":
+                batch.objects[i].Subtype = batch.objects[i].xpca["zBestSubType"]
+            else:
+                batch.objects[i].Subtype = set_subtype
+            batch.objects[i].Chi2 = batch.objects[i].xpca["zBestChi2"]
+            batch.objects[i].Z = batch.objects[i].xpca["zBest"]
+            batch.objects[i].Z_std = batch.objects[i].xpca["zBestErr"]
+            batch.objects[i].AB = np.nan
+            batch.objects[i].AB_std = np.nan
+    elif set_method=="CompoM SMC":
+        if hasattr(batch.objects[i], "compoM_SMC"):
+            batch.objects[i].Type = set_type
+            if set_subtype=="None":
+                batch.objects[i].Subtype = np.nan
+            else:
+                batch.objects[i].Subtype = set_subtype
+            batch.objects[i].Chi2 = batch.objects[i].compoM_SMC["chi2"]
+            batch.objects[i].Z = batch.objects[i].compoM_SMC["z"]
+            batch.objects[i].Z_std = batch.objects[i].compoM_SMC["z_std"]
+            batch.objects[i].AB = batch.objects[i].compoM_SMC["AB"]
+            batch.objects[i].AB_std = batch.objects[i].compoM_SMC["AB_std"]
+    elif set_method=="CompoM LMC":
+        if hasattr(batch.objects[i], "compoM_LMC"):
+            batch.objects[i].Type = set_type
+            if set_subtype=="None":
+                batch.objects[i].Subtype = np.nan
+            else:
+                batch.objects[i].Subtype = set_subtype
+            batch.objects[i].Chi2 = batch.objects[i].compoM_LMC["chi2"]
+            batch.objects[i].Z = batch.objects[i].compoM_LMC["z"]
+            batch.objects[i].Z_std = batch.objects[i].compoM_LMC["z_std"]
+            batch.objects[i].AB = batch.objects[i].compoM_LMC["AB"]
+            batch.objects[i].AB_std = batch.objects[i].compoM_LMC["AB_std"]
+    elif set_method=="CompoM MW":
+        if hasattr(batch.objects[i], "compoM_MW"):
+            batch.objects[i].Type = set_type
+            if set_subtype=="None":
+                batch.objects[i].Subtype = np.nan
+            else:
+                batch.objects[i].Subtype = set_subtype
+            batch.objects[i].Chi2 = batch.objects[i].compoM_MW["chi2"]
+            batch.objects[i].Z = batch.objects[i].compoM_MW["z"]
+            batch.objects[i].Z_std = batch.objects[i].compoM_MW["z_std"]
+            batch.objects[i].AB = batch.objects[i].compoM_MW["AB"]
+            batch.objects[i].AB_std = batch.objects[i].compoM_MW["AB_std"]
+    elif set_method=="Stellar":
+        if hasattr(batch.objects[i], "stellar_classification"):
+            batch.objects[i].Type = set_type
+            if set_subtype=="None":
+                batch.objects[i].Subtype = batch.objects[i].stellar_classification["Template_file"]
+            else:
+                batch.objects[i].Subtype = set_subtype
+            batch.objects[i].Chi2 = batch.objects[i].stellar_classification["Chi2"]
+            batch.objects[i].Z = np.nan
+            batch.objects[i].Z_std = np.nan
+            batch.objects[i].AB = np.nan
+            batch.objects[i].AB_std = np.nan
+    elif set_method=="Custom":
+        batch.objects[i].Type = set_type
+        if set_subtype=="None":
+            batch.objects[i].Subtype = np.nan
+        else:
+            batch.objects[i].Subtype = set_subtype
+        batch.objects[i].Chi2 = np.nan
+        batch.objects[i].Z = np.nan
+        batch.objects[i].Z_std = np.nan
+        batch.objects[i].AB = np.nan
+        batch.objects[i].AB_std = np.nan
+    else:
+        batch.objects[i].Type = set_type
+        batch.objects[i].Subtype = set_subtype
+
+    save_SNAQS_object(1, "AllSpectra_obj_visual")
+    return
+
 
 
 ###### Stuff related to analysis plot
@@ -553,18 +819,24 @@ def update_spectrum_plot(clickData, spectra_path, template_selected):
     Input("analysis_plot_selector", "value")
     )
 def update_analysis_plot(selectedData, plot_type):
-    global df
+    global df, batch
     if selectedData==None:
-        raise PreventUpdate
+            raise PreventUpdate
 
-    filenames = pd.Series([selectedData["points"][i]["customdata"][-4] for i in range(len(selectedData["points"]))])
-    selected_df = df[df["Object_name"].isin(filenames)]
+    filenames = pd.Series([selectedData["points"][i]["customdata"][0] for i in range(len(selectedData["points"]))])
+
+    if batch!=None:
+        selected_df = batch.generate_export_data(filenames.values)
+    else:
+        selected_df = df[df["Object_name"].isin(filenames)]
+
     if plot_type=="Redshift histogram":
         fig3 = px.histogram(selected_df, x="z", labels={"x": "z [A.U.]"})
     elif plot_type=="Subtype histogram":
         fig3 = px.histogram(selected_df, x="Subtype", labels={"x": "Subtypes [A.U.]"})
     elif plot_type=="Reddening histogram":
         fig3 = px.histogram(selected_df, x="compoM_AB", labels={"x": "Reddening [A.U.]"})
+
 
     return fig3
 if __name__ == '__main__':

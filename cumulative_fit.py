@@ -17,7 +17,7 @@ from iminuit.cost import LeastSquares
 from helper_functions import find_decimal_point as f_n
 from helper_functions import cumulative_fitting_mag, double_power_law
 
-df = pd.read_csv("Full_run_export_ALL_GAIA.csv")
+df = pd.read_csv("Full_run_export_SNAQS.csv")
 df.drop_duplicates(subset="GAIA_ID", inplace=True)
 
 def plotting_func_mag(df, func_linspace, mag_type, x_mag_text, n_points=20, z_min=2.2, z_max=3.5, x_text=18.75, y_text=[0.1, 0.075, 0.055, 0.04, 0.03]):
@@ -96,19 +96,19 @@ plt.savefig("Extra_analysis/cumulative_fit_gmag_allreg.pdf")
 plt.close()
 
 func_linspace = np.linspace(15.7, 19, 1000)
-a0, fig = plotting_func_mag(df, func_linspace, z_min=0, z_max=np.round(df["z"].max(), 2), mag_type="phot_g_mean_mag", x_mag_text="G-mag (GAIA) [A.U.]", x_text=18.00, y_text=[0.1, 0.065, 0.045, 0.03, 0.02], n_points=25)
+a0, fig = plotting_func_mag(df, func_linspace, z_min=0, z_max=np.round(df["z"].max(), 2), mag_type="GAIA_Gmag", x_mag_text="G-mag (GAIA) [A.U.]", x_text=18.00, y_text=[0.1, 0.065, 0.045, 0.03, 0.02], n_points=25)
 fig.tight_layout()
 plt.savefig("Extra_analysis/cumulative_fit_GAIA_mag_allreg.pdf")
 plt.close()
 
 func_linspace = np.linspace(17.5, 19, 1000)
-a0, fig = plotting_func_mag(df, func_linspace, mag_type="phot_g_mean_mag", x_mag_text="G-mag (GAIA) [A.U.]", x_text=18.50, y_text=[0.1, 0.065, 0.045, 0.03, 0.02], n_points=25)
+a0, fig = plotting_func_mag(df, func_linspace, mag_type="GAIA_Gmag", x_mag_text="G-mag (GAIA) [A.U.]", x_text=18.50, y_text=[0.1, 0.065, 0.045, 0.03, 0.02], n_points=25)
 fig.tight_layout()
 plt.savefig("Extra_analysis/cumulative_fit_GAIA_mag_reg1.pdf")
 plt.close()
 
 func_linspace = np.linspace(15.7, 19, 1000)
-a0, fig = plotting_func_mag(df, func_linspace, z_min=1.0, z_max=2.2, mag_type="phot_g_mean_mag", x_mag_text="G-mag (GAIA) [A.U.]", x_text=18.00, y_text=[0.1, 0.065, 0.045, 0.03, 0.02], n_points=25)
+a0, fig = plotting_func_mag(df, func_linspace, z_min=1.0, z_max=2.2, mag_type="GAIA_Gmag", x_mag_text="G-mag (GAIA) [A.U.]", x_text=18.00, y_text=[0.1, 0.065, 0.045, 0.03, 0.02], n_points=25)
 fig.tight_layout()
 plt.savefig("Extra_analysis/cumulative_fit_GAIA_mag_reg2.pdf")
 plt.close()

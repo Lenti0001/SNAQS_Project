@@ -57,41 +57,44 @@ def z_Av_scatter_hist(df, ax, ax_histx, ax_histy, z_nbins=25):
     y_SMC = df_SMC["compoM_AB"].values
     y_LMC = df_LMC["compoM_AB"].values
 
-    color_data = np.abs(np.log10(df["best_compoM_Chi2"].values)-np.log10(df["Chi2"].values))
+    color_data = np.log10(df["best_compoM_Chi2"].values/df["Chi2"].values)
 
-    color_data_SMC = np.log(np.abs(df_SMC["best_compoM_Chi2"].values-df_SMC["Chi2"].values))
-    color_data_LMC = np.log(np.abs(df_LMC["best_compoM_Chi2"].values-df_LMC["Chi2"].values))
-    color_data_MW = np.log(np.abs(df_MW["best_compoM_Chi2"].values-df_MW["Chi2"].values))
+    color_data_SMC = np.log10(df_SMC["best_compoM_Chi2"].values/df_SMC["Chi2"].values)
+    color_data_LMC = np.log10(df_LMC["best_compoM_Chi2"].values/df_LMC["Chi2"].values)
+    color_data_MW = np.log10(df_MW["best_compoM_Chi2"].values/df_MW["Chi2"].values)
     # no labels
-    cm = plt.cm.get_cmap('inferno_r')
+    cm = plt.cm.get_cmap('plasma')
 
     ax_histx.tick_params(axis="x", labelbottom=True)
     ax_histy.tick_params(axis="y", labelleft=True)
     ax_histx.grid(alpha=0.33)
     ax_histy.grid(alpha=0.33)
-    ax_histy.set_yscale("log")
+    #ax_histy.set_yscale("log")
 
     # the scatter plot:
     fig_scat = ax.scatter(x, y, c=color_data, cmap=cm)
     ax.clear()
 
     ax.grid(alpha=0.33)
-    ax.set_xlabel("Redshift (z) [A.U.]")
-    ax.set_ylabel("Reddening ($AB$) [A.U.]")
-    ax.set_yscale("log")
-    ax.set_ylim(np.min(y)-10, np.max(y)+10)
+    ax.set_xlabel("$z$ [A.U.]", fontsize=18)
+    ax.set_ylabel("$A(B)$ [A.U.]", fontsize=18)
+    #ax.set_yscale("log")
+    #ax.set_ylim(np.min(y)-10, np.max(y)+10)
+    ax.set_ylim(-0.5, np.max(y)+0.5)
 
     ax.scatter(x_MW, y_MW, c=color_data_MW, cmap=cm, marker="d", edgecolor="black", linewidth=0.5, label="MW extinct. params")
-    ax.scatter(x_SMC, y_SMC, c=color_data_SMC, cmap=cm, marker="*", edgecolor="black", linewidth=0.5, label="SMC extinct. params")
+    ax.scatter(x_SMC, y_SMC, c=color_data_SMC, cmap=cm, marker="^", edgecolor="black", linewidth=0.5, label="SMC extinct. params")
     ax.scatter(x_LMC, y_LMC, c=color_data_LMC, cmap=cm, marker="s", edgecolor="black", linewidth=0.5, label="LMC extinct. params")
-    ax.legend(loc="lower right")
+    ax.legend(loc="upper right")
 
     ax_histx.hist(x, bins=z_nbins, edgecolor="black", color="blue")
     ax_histx.set_ylabel("Counts [A.U.]")
     hist, bins, _ = ax_histy.hist(y, bins=50, color="white")
 
-    logbins = np.logspace(np.log10(bins[0]),np.log10(bins[-1]),len(bins))
-    ax_histy.hist(y, bins=logbins, orientation='horizontal', color="red", edgecolor="black")
-    ax_histy.set_ylim(np.min(y)-10, np.max(y)+10)
+    #logbins = np.logspace(np.log10(bins[0]),np.log10(bins[-1]),len(bins))
+    #ax_histy.hist(y, bins=logbins, orientation='horizontal', color="red", edgecolor="black")
+    ax_histy.hist(y, bins=100, orientation='horizontal', color="red", edgecolor="black")
+    #ax_histy.set_ylim(np.min(y)-10, np.max(y)+10)
+    ax_histy.set_ylim(-0.5, np.max(y)+0.5)
     ax_histy.set_xlabel("Counts [A.U.]")
     return fig_scat
