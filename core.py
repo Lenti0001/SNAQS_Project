@@ -24,9 +24,6 @@ from astropy.coordinates import SkyCoord
 from astroquery.vizier import Vizier
 from astroquery.gaia import Gaia
 
-### Import utilities
-from tqdm import tqdm
-
 class SNAQS_object():
     
     def __init__(self, path, filename, SDSS_dat=None, constrain_wave_SDSS=[3600, 8500], constrain_wave_DAT=[4000, 7800], assign_photometries=True, run_queries=True, crossmatch_file=True, run_GAIA=True, search_radii=[5.0, 1.0, 1.0]):
@@ -34,30 +31,26 @@ class SNAQS_object():
         self.survey_df = pd.read_csv(os.path.join("Datafiles/Surveyphotometry.dat"), sep="\s+")
         
         if self.filename[-4:]=="fits":
-            try:
-                self.name = filename[:-5]
-                hdu = fits.open(path + filename)
-                flux = hdu[1].data["flux"]
-                wave = 10**(hdu[1].data["loglam"])
-                error = 1/hdu[1].data["ivar"]**0.5
-                mask = (wave>constrain_wave_SDSS[0]) & (wave<constrain_wave_SDSS[1])
-                self.flux = flux[mask].astype(float)
-                self.wave = wave[mask].astype(float)
-                self.error = error[mask].astype(float)
+           # try:
+            self.name = filename[:-5]
+            hdu = fits.open(path + filename)
+            
+            self.hdu = hdu
+            self.fetch_flux()
+            self.fetch_wavelength()
+            self.fetch_error()
+            self.fetch_coords()
+            
+            mask = (self.wave>constrain_wave_SDSS[0]) & (self.wave<constrain_wave_SDSS[1])
+            self.flux = self.flux[mask].astype(float)
+            self.wave = self.wave[mask].astype(float)
+            self.error = self.error[mask].astype(float)
 
-                try:
-                    self.RA = hdu[0].header["PLUG_RA"]
-                    self.DEC = hdu[0].header["PLUG_DEC"]
-                except:
-                    self.RA = hdu[0].header["RA"]
-                    try:
-                        self.DEC = hdu[0].header["DEC"]
-                    except:
-                        self.DEC = hdu[0].header["Dec"]
-
-                hdu.close()
-            except:
-                print(f'Could not open and extract either flux, wave, error, RA and DEC data (or any combination of these) from file {self.filename}!')
+            hdu.close()
+            self.hdu.close()
+            del(self.hdu)
+            #except:
+            #    print(f'Could not open and extract either flux, wave, error, RA and DEC data (or any combination of these) from file {self.filename}!')
 
             
             ### Attempt to improve the RA/DEC precision by cross-information with the "AllSDSS" datafile:
@@ -147,6 +140,85 @@ class SNAQS_object():
         self.best_compoM_Chi2 = np.nan
 
         self.LOF_val = np.nan
+        
+    def fetch_wavelength(self):
+        self.wave = np.array([])
+        for i in range(len(self.hdu)):
+            if hasattr(self.hdu[i], "data"):
+                if hasattr(self.hdu[i].data, "WAVELENGTH"):
+                    self.wave = np.append(self.wave, self.hdu[i].data["WAVELENGTH"])
+                elif hasattr(self.hdu[i].data, "WAVE"):
+                    self.wave = np.append(self.wave, self.hdu[i].data["WAVE"])
+                elif hasattr(self.hdu[i].data, "LOGLAM"):
+                    self.wave = np.append(self.wave, 10**self.hdu[i].data["LOGLAM"])
+                elif hasattr(self.hdu[i].data, "loglam"):
+                    self.wave = np.append(self.wave, 10**self.hdu[i].data["loglam"])
+        return
+    
+    def fetch_flux(self):
+        self.flux = np.array([])
+        for i in range(len(self.hdu)):
+            if hasattr(self.hdu[i], "data"):
+                if hasattr(self.hdu[i].data, "FLUX"):
+                    self.flux = np.append(self.flux, self.hdu[i].data["FLUX"])
+                elif hasattr(self.hdu[i].data, "flux"):
+                    self.flux = np.append(self.flux, self.hdu[i].data["flux"])
+        return
+    
+    def fetch_error(self):
+        self.error = np.array([])
+        for i in range(len(self.hdu)):
+            if hasattr(self.hdu[i], "data"):
+                if hasattr(self.hdu[i].data, "ivar"):
+                    self.error = np.append(self.error, 1/self.hdu[i].data["ivar"]**0.5)
+                elif hasattr(self.hdu[i].data, "IVAR"):
+                    self.error = np.append(self.error, 1/self.hdu[i].data["IVAR"]**0.5)
+                elif hasattr(self.hdu[i].data, "err"):
+                    self.error = np.append(self.error, self.hdu[i].data["err"])
+                elif hasattr(self.hdu[i].data, "error"):
+                    self.error = np.append(self.error, self.hdu[i].data["error"])
+        return
+    
+    def fetch_coords(self):
+        for i in range(len(self.hdu)):
+            if hasattr(self.hdu[i], "data"):
+                if hasattr(self.hdu[i].data, "RA"):
+                    self.RA = self.hdu[i].data["RA"]
+                elif hasattr(self.hdu[i].data, "ra"):
+                    self.RA = self.hdu[i].data["ra"]
+                elif hasattr(self.hdu[i].data, "PLUG_RA"):
+                    self.RA = self.hdu[i].data["PLUG_RA"]
+                elif hasattr(self.hdu[i].data, "TARGET_RA"):
+                    self.RA = self.hdu[i].data["TARGET_RA"]
+                
+                if hasattr(self.hdu[i].data, "DEC"):
+                    self.DEC = self.hdu[i].data["DEC"]
+                elif hasattr(self.hdu[i].data, "dec"):
+                    self.DEC = self.hdu[i].data["dec"]
+                elif hasattr(self.hdu[i].data, "PLUG_DEC"):
+                    self.DEC = self.hdu[i].data["PLUG_DEC"]
+                elif hasattr(self.hdu[i].data, "TARGET_DEC"):
+                    self.DEC = self.hdu[i].data["TARGET_DEC"]
+                    
+            if hasattr(self.hdu[i], "header"):
+                if hasattr(self.hdu[i].header, "RA"):
+                    self.RA = self.hdu[i].header["RA"]
+                elif hasattr(self.hdu[i].header, "ra"):
+                    self.RA = self.hdu[i].header["ra"]
+                elif hasattr(self.hdu[i].header, "PLUG_RA"):
+                    self.RA = self.hdu[i].header["PLUG_RA"]
+                elif hasattr(self.hdu[i].header, "TARGET_RA"):
+                    self.RA = self.hdu[i].header["TARGET_RA"]
+                
+                if hasattr(self.hdu[i].header, "DEC"):
+                    self.DEC = self.hdu[i].header["DEC"]
+                elif hasattr(self.hdu[i].header, "dec"):
+                    self.DEC = self.hdu[i].header["dec"]
+                elif hasattr(self.hdu[i].header, "PLUG_DEC"):
+                    self.DEC = self.hdu[i].header["PLUG_DEC"]
+                elif hasattr(self.hdu[i].header, "TARGET_DEC"):
+                    self.DEC = self.hdu[i].header["TARGET_DEC"]
+
 
     def assign_SDSS_photometry(self, vizier_search=True, crossmatch=True, search_radius_arcsec=1):
         if vizier_search:

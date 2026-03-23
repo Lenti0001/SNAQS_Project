@@ -75,8 +75,7 @@ class SNAQS():
             self.inline_text="Loading spectra and assigning photometries"
         for num, i in tqdm(enumerate(self.dir_list)):
             if i[0]!=".": ### Excluding meta-files and scanning for fits files in folder
-                idx_dot = i.index(".")
-                ext = i[idx_dot+1:]
+                ext = i[-4:]
                 self.objects[i] = SNAQS_object(self.path, i, self.SDSS_dat, assign_photometries=assign_photometries, run_queries=False, crossmatch_file=crossmatch_file, run_GAIA=False)
                 if ext=="fits": ### Excluding meta-files and scanning for fits files in folder
 
@@ -84,7 +83,7 @@ class SNAQS():
                     if hasattr(self.objects[i], "RA") and hasattr(self.objects[i], "DEC"):
                         self.total_list.append(i)
                         if (self.objects[i].RA>RA_range[0]) & (self.objects[i].RA<RA_range[1]) & (self.objects[i].DEC>DEC_range[0]) & (self.objects[i].DEC<DEC_range[1]):
-                            self.objects[i] = SNAQS_object(self.path, i, self.SDSS_dat, assign_photometries=assign_photometries, run_queries=run_queries, crossmatch_file=crossmatch_file)
+                            self.objects[i] = SNAQS_object(self.path, i, self.SDSS_dat, assign_photometries=assign_photometries, run_queries=run_queries, crossmatch_file=crossmatch_file, run_GAIA=False)
                             if len(self.objects[i].flux)==0 or np.std(self.objects[i].flux)==0:
                                 self.objects[i].Type = "MISSING_FLUX"
                             else:
