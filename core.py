@@ -12,6 +12,11 @@ import matplotlib.pyplot as plt
 from astropy.io import fits
 import os
 
+try:
+    from spectres import spectres_numba as spectres
+except:
+    from spectres import spectres
+
 #### Import custom functions ###
 from helper_functions import find_decimal_point
 from compoM_functions import smc, lmc, mw
@@ -26,31 +31,51 @@ from astroquery.gaia import Gaia
 
 class SNAQS_object():
     
-    def __init__(self, path, filename, SDSS_dat=None, constrain_wave_SDSS=[3600, 8500], constrain_wave_DAT=[4000, 7800], assign_photometries=True, run_queries=True, crossmatch_file=True, run_GAIA=True, search_radii=[5.0, 1.0, 1.0]):
+    def __init__(self, path, filename, SDSS_dat=None, constrain_wave=[3800, 8000], wave_points=5000, assign_photometries=True, run_queries=True, crossmatch_file=True, run_GAIA=True, search_radii=[5.0, 1.0, 1.0]):
         self.filename = filename
         self.survey_df = pd.read_csv(os.path.join("Datafiles/Surveyphotometry.dat"), sep="\s+")
         
         if self.filename[-4:]=="fits":
-           # try:
-            self.name = filename[:-5]
-            hdu = fits.open(path + filename)
-            
-            self.hdu = hdu
-            self.fetch_flux()
-            self.fetch_wavelength()
-            self.fetch_error()
-            self.fetch_coords()
-            
-            mask = (self.wave>constrain_wave_SDSS[0]) & (self.wave<constrain_wave_SDSS[1])
-            self.flux = self.flux[mask].astype(float)
-            self.wave = self.wave[mask].astype(float)
-            self.error = self.error[mask].astype(float)
-
-            hdu.close()
-            self.hdu.close()
-            del(self.hdu)
-            #except:
-            #    print(f'Could not open and extract either flux, wave, error, RA and DEC data (or any combination of these) from file {self.filename}!')
+            try:
+                self.name = filename[:-5]
+                hdu = fits.open(path + filename)
+                
+                self.hdu = hdu
+                self.fetch_flux()
+                self.fetch_wavelength()
+                self.fetch_error()
+                self.fetch_coords()
+                
+                ##### Sort from smallest value to largest for the original wavelength, and let the flux follow as well:
+                self.flux = self.flux[np.argsort(self.wave)]
+                self.error = self.error[np.argsort(self.wave)]
+                self.wave = np.sort(self.wave)
+                
+                ##### A "synthesized" flux from Spectres is then made to redefine the wavelength, flux and errors!
+                new_wave = np.linspace(np.min(self.wave), np.max(self.wave), wave_points)
+                self.flux, self.error = spectres(new_wave, self.wave, self.flux, self.error)
+                self.wave = new_wave
+                
+                #### Remove resulting NaNs in the dataset:
+                self.flux = self.flux[~np.isnan(self.error)]
+                self.wave = self.wave[~np.isnan(self.error)]
+                self.error = self.error[~np.isnan(self.error)]
+                
+                self.wave = self.wave[~np.isnan(self.flux)]
+                self.error = self.error[~np.isnan(self.flux)]
+                self.flux = self.flux[~np.isnan(self.flux)]
+                
+                #### Fix zero error measurements in data:
+                if len(self.error[self.error==0])>0:
+                    self.error[self.error==0] = np.median(self.error)
+                
+                self.data = pd.DataFrame({"flux": self.flux, "wavelength": self.wave, "error": self.error})
+    
+                hdu.close()
+                self.hdu.close()
+                del(self.hdu)
+            except:
+                print(f'Could not open and extract either flux, wave, error, RA and DEC data (or any combination of these) from file {self.filename}!')
 
             
             ### Attempt to improve the RA/DEC precision by cross-information with the "AllSDSS" datafile:
@@ -81,7 +106,7 @@ class SNAQS_object():
             
             self.name = filename[:-4]
             data = pd.read_csv(path + filename, sep="\s+")
-            data = data[data["calibrated_flux"].notna() & (data["wavelength"]>constrain_wave_DAT[0]) & (data["wavelength"]<constrain_wave_DAT[1]) & (data["calibrated_flux"]>10**(-20))]
+            data = data[data["calibrated_flux"].notna() & (data["wavelength"]>constrain_wave[0]) & (data["wavelength"]<constrain_wave[1]) & (data["calibrated_flux"]>10**(-20))]
             if np.median(data["calibrated_flux"])<1e-14:
                 data["calibrated_flux"] *= 1e17
                 try:

@@ -73,7 +73,7 @@ class SNAQS():
 
         if self.webui==True:
             self.inline_text="Loading spectra and assigning photometries"
-        for num, i in tqdm(enumerate(self.dir_list)):
+        for num, i in tqdm(enumerate(self.dir_list[::100])):
             if i[0]!=".": ### Excluding meta-files and scanning for fits files in folder
                 ext = i[-4:]
                 self.objects[i] = SNAQS_object(self.path, i, self.SDSS_dat, assign_photometries=assign_photometries, run_queries=False, crossmatch_file=crossmatch_file, run_GAIA=False)
@@ -188,64 +188,60 @@ class SNAQS():
             self.inline_text="Running xPCA classification"
             self.progress_text=f"/{len(self.SNAQS_list)}"
         for num,i in tqdm(enumerate(self.SNAQS_list)):
-            #try:
-            if i[-3:]=="dat":
+            try:
                 self.objects[i].data.to_csv("{}/temp_data.csv".format(os.getcwd()))
                 os.system("python -m xpca {} --source csv -o {}/temp".format("temp_data.csv", os.getcwd()))
-            else:
-                os.system("python -m xpca {} -s sdss -o {}/temp".format(self.path + i, os.getcwd()))
-            model_data = pd.read_csv("xpca_bestfit_model_temp.csv")
-            hdu = fits.open("{}/temp".format(os.getcwd()))
-
-            ###### IMPORTANT: Calculating OWN CHI2 HERE, not the one PROVIDED FROM XPCA!!! (Also rescaling the flux values to the ones provided by the target wavelength)
-
-            rescaled_flux = spectres(self.objects[i].wave, model_data["wave"].values, model_data["flux"].values)
-
-            mask = ~np.isnan(rescaled_flux)
-
-            if self.objects[i].filename[-3:]=="dat":
-                chi2_val = np.sum((self.objects[i].flux[mask]-rescaled_flux[mask])**2/np.sqrt(self.objects[i].flux[mask]))
-            else:
+                #else:
+                #    os.system("python -m xpca {} -s sdss -o {}/temp".format(self.path + i, os.getcwd()))
+                model_data = pd.read_csv("xpca_bestfit_model_temp.csv")
+                hdu = fits.open("{}/temp".format(os.getcwd()))
+    
+                ###### IMPORTANT: Calculating OWN CHI2 HERE, not the one PROVIDED FROM XPCA!!! (Also rescaling the flux values to the ones provided by the target wavelength)
+    
+                rescaled_flux = spectres(self.objects[i].wave, model_data["wave"].values, model_data["flux"].values)
+    
+                mask = ~np.isnan(rescaled_flux)
+    
                 chi2_val = np.sum((self.objects[i].flux[mask]-rescaled_flux[mask])**2/self.objects[i].error[mask]**2)
-
-            if isinstance(hdu[1].data["zBest"], np.ndarray):
-                z = hdu[1].data["zBest"][0]
-            else:
-                z = hdu[1].data["zBest"]
-
-            if isinstance(hdu[1].data["zBestErr"], np.ndarray):
-                z_std = hdu[1].data["zBestErr"][0]
-            else:
-                z_std = hdu[1].data["zBestErr"]
-
-            if isinstance(hdu[1].data["zBestType"], np.ndarray):
-                Type = hdu[1].data["zBestType"][0]
-            else:
-                Type = hdu[1].data["zBestType"]
-
-            if isinstance(hdu[1].data["zBestSubType"], np.ndarray):
-                Subtype = hdu[1].data["zBestSubType"][0]
-            else:
-                Subtype = hdu[1].data["zBestSubType"]
-
-            self.objects[i].best_fit_candidate(Type, Subtype, chi2_val, "xPCA", z, z_std, np.nan, np.nan)
-            self.objects[i].xpca = {"BestModel_flux": rescaled_flux, "BestModel_wave": self.objects[i].wave, "zBest": z, "zBestErr": z_std, "zBestChi2": chi2_val, "zBestType": Type, "zBestSubType": Subtype}
-
-            if plot==True:
-                self.objects[i].plot_xpca()
-            os.remove("{}/temp".format(os.getcwd()))
-            os.remove("{}/xpca_bestfit_model_temp.csv".format(os.getcwd()))
-            if i[-3:]=="dat":
-                os.remove("{}/temp_data.csv".format(os.getcwd()))
-            if self.webui==True:
-                self.progress_text=f"{num}/{len(self.SNAQS_list)}"
-           # except:
-           #     text = "FAILED - Classification of object {} failed either due to XPCA software or due to the FITS/DAT file itself - setting output to NaN".format(i)
-           #     print(text)
-           #     self.objects[i].xpca = {"zBest": np.nan, "zBestErr": np.nan, "zBestChi2": np.nan, "zBestType": np.nan, "zBestSubType": np.nan}
-           #     if self.webui==True:
-           #         self.inline_text=text
-           #         self.progress_text=f"{num}/{len(self.SNAQS_list)}"
+    
+                if isinstance(hdu[1].data["zBest"], np.ndarray):
+                    z = hdu[1].data["zBest"][0]
+                else:
+                    z = hdu[1].data["zBest"]
+    
+                if isinstance(hdu[1].data["zBestErr"], np.ndarray):
+                    z_std = hdu[1].data["zBestErr"][0]
+                else:
+                    z_std = hdu[1].data["zBestErr"]
+    
+                if isinstance(hdu[1].data["zBestType"], np.ndarray):
+                    Type = hdu[1].data["zBestType"][0]
+                else:
+                    Type = hdu[1].data["zBestType"]
+    
+                if isinstance(hdu[1].data["zBestSubType"], np.ndarray):
+                    Subtype = hdu[1].data["zBestSubType"][0]
+                else:
+                    Subtype = hdu[1].data["zBestSubType"]
+    
+                self.objects[i].best_fit_candidate(Type, Subtype, chi2_val, "xPCA", z, z_std, np.nan, np.nan)
+                self.objects[i].xpca = {"BestModel_flux": rescaled_flux, "BestModel_wave": self.objects[i].wave, "zBest": z, "zBestErr": z_std, "zBestChi2": chi2_val, "zBestType": Type, "zBestSubType": Subtype}
+    
+                if plot==True:
+                    self.objects[i].plot_xpca()
+                os.remove("{}/temp".format(os.getcwd()))
+                os.remove("{}/xpca_bestfit_model_temp.csv".format(os.getcwd()))
+                if i[-3:]=="dat":
+                    os.remove("{}/temp_data.csv".format(os.getcwd()))
+                if self.webui==True:
+                    self.progress_text=f"{num}/{len(self.SNAQS_list)}"
+            except:
+                text = "FAILED - Classification of object {} failed either due to XPCA software or due to the file itself - setting output to NaN".format(i)
+                print(text)
+                self.objects[i].xpca = {"zBest": np.nan, "zBestErr": np.nan, "zBestChi2": np.nan, "zBestType": np.nan, "zBestSubType": np.nan}
+                if self.webui==True:
+                    self.inline_text=text
+                    self.progress_text=f"{num}/{len(self.SNAQS_list)}"
     
     def stellar_classification(self, plot=True):
         if self.webui==True:
@@ -350,7 +346,7 @@ class SNAQS():
                 
                     flux_interp = (flux_interp-y_continuum_fitted.value)/y_continuum_fitted.value
                 except:
-                    print("Fitting continuum model failed - flux will be unnormalised.")
+                    print("Fitting continuum model failed - flux will NOT be normalised!")
             pd_data.iloc[i] = flux_interp
             if self.webui==True:
                 self.progress_text=f"{i}/{len(self.SNAQS_list)}"
