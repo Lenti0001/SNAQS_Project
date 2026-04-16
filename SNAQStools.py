@@ -22,13 +22,11 @@ from iminuit.cost import LeastSquares
 from scipy.stats import chi2
 
 #### Import custom functions ###
-from helper_functions import find_decimal_point
 from compoM_functions import smc, lmc, mw
 
 #### Import classification functions
 from sklearn.neighbors import LocalOutlierFactor
 import astropy.units as u
-from astropy.coordinates import SkyCoord
 from specutils.spectra import Spectrum1D
 from specutils.fitting import fit_generic_continuum
 
@@ -40,11 +38,10 @@ except:
     from spectres import spectres
 
 import warnings
-import gc
 
 class SNAQS():
     
-    def __init__(self, path, SDSS, RA_range=[190, 210], DEC_range=[22, 36], survey_photo_filename="Surveyphotometry.dat", SDSS_dat_filename="AllSDSS.dat", webui=False, assign_photometries=True, run_queries=True, crossmatch_file=True, search_radii=[5.0, 1.0, 1.0], reduced_mem=False):
+    def __init__(self, path, RA_range=[190, 210], DEC_range=[22, 36], sdss_file="sdss.csv", ukidss_file="ukidss.csv", WISE_file="WISE.csv", gaia_file="GAIA.csv", webui=False, assign_photometries=True, reduced_mem=False, maxAngDist=15/3600):
         self.webui = webui
         if self.webui==True:
             self.progress_text = None
@@ -53,6 +50,12 @@ class SNAQS():
         self.path = path
         self.dir_list = os.listdir(path)
         
+        ukidss_df = pd.read_csv("Datafiles/" + ukidss_file)
+        sdss_df = pd.read_csv("Datafiles/" + sdss_file)
+        WISE_df = pd.read_csv("Datafiles/" + WISE_file)
+        gaia_df = pd.read_csv("Datafiles/" + gaia_file)
+        survey_df = pd.read_csv("Datafiles/old/Surveyphotometry.dat", sep=" ")
+        
         ###SNAQS-related attributes
         self.total_list = []
         self.SNAQS_list = []
@@ -60,30 +63,21 @@ class SNAQS():
         
         if not os.path.exists("Outputs/"):
             os.makedirs("Outputs/")
-        
-        self.SDSS_dat = None
-        if SDSS==True:
-            try:
-                self.SDSS_dat = pd.read_csv(os.path.join("Datafiles/", SDSS_dat_filename), sep="\s+")
-            except:
-                text = "WARNING: You have specified that the loaded objects are SDSS spectra, but no SDSS datafile parameters can be found. The pipeline will still function, but some parameters (primarily RA/Dec) may be unprecise or may not exist."
-                if self.webui==True:
-                    self.inplace_text=text
-                print(text)
 
         if self.webui==True:
             self.inline_text="Loading spectra and assigning photometries"
-        for num, i in tqdm(enumerate(self.dir_list[::100])):
+        for num, i in tqdm(enumerate(self.dir_list)):
             if i[0]!=".": ### Excluding meta-files and scanning for fits files in folder
-                ext = i[-4:]
-                self.objects[i] = SNAQS_object(self.path, i, self.SDSS_dat, assign_photometries=assign_photometries, run_queries=False, crossmatch_file=crossmatch_file, run_GAIA=False)
-                if ext=="fits": ### Excluding meta-files and scanning for fits files in folder
+                self.objects[i] = SNAQS_object(self.path, i, sdss_df=None, WISE_df=None, ukidss_df=None, gaia_df=None, survey_df=None, assign_photometries=False, maxAngDist=maxAngDist)
 
-                    ### Next we apply the SNAQS RA and DEC criteria:
-                    if hasattr(self.objects[i], "RA") and hasattr(self.objects[i], "DEC"):
-                        self.total_list.append(i)
+                ### Next we apply the SNAQS RA and DEC criteria:
+                if hasattr(self.objects[i], "RA") and hasattr(self.objects[i], "DEC"):
+                    self.total_list.append(i)
+                    if len(self.objects[i].flux)==0 or np.std(self.objects[i].flux)==0:
+                        self.objects[i].Type = "MISSING_FLUX"
+                    else:
                         if (self.objects[i].RA>RA_range[0]) & (self.objects[i].RA<RA_range[1]) & (self.objects[i].DEC>DEC_range[0]) & (self.objects[i].DEC<DEC_range[1]):
-                            self.objects[i] = SNAQS_object(self.path, i, self.SDSS_dat, assign_photometries=assign_photometries, run_queries=run_queries, crossmatch_file=crossmatch_file, run_GAIA=False)
+                            self.objects[i] = SNAQS_object(self.path, i, sdss_df=sdss_df, WISE_df=WISE_df, ukidss_df=ukidss_df, gaia_df=gaia_df, survey_df=survey_df, assign_photometries=assign_photometries, maxAngDist=maxAngDist)
                             if len(self.objects[i].flux)==0 or np.std(self.objects[i].flux)==0:
                                 self.objects[i].Type = "MISSING_FLUX"
                             else:
@@ -93,22 +87,11 @@ class SNAQS():
                                 del self.objects[i].flux
                                 del self.objects[i].wave
                                 del self.objects[i].error
-                    else:
-                        del self.objects[i]
-                        self.dir_list.remove(i)
-
-                elif ext=="dat":
-                    self.total_list.append(i)
-                    self.objects[i] = SNAQS_object(self.path, i, self.SDSS_dat, assign_photometries=assign_photometries, run_queries=run_queries, crossmatch_file=crossmatch_file)
-                    if len(self.objects[i].flux)==0 or np.std(self.objects[i].flux)==0:
-                        self.objects[i].Type = "MISSING_FLUX"
-                    else:
-                        self.SNAQS_list.append(i)
+                else:
+                    del self.objects[i]
+                    self.dir_list.remove(i)
             if self.webui==True:
                 self.progress_text=f"{num}/{len(self.dir_list)}"
-        
-        ##### After use, we delete the SDSS file in the loader as to save on memory:
-        del self.SDSS_dat
             
     def fit_compoM(self, plot=True, param="SMC"):
         '''Fits the loaded spectra with the SMC parameters. New atributes are then added to the SNAQS objects related to the fitting when done.'''
@@ -555,7 +538,8 @@ class SNAQS():
             "err_SDSS-i": [self.objects[i].SDSS_photometry["e_imag"] for i in obj_list],
             "SDSS-z": [self.objects[i].SDSS_photometry["zmag"] for i in obj_list],
             "err_SDSS-z": [self.objects[i].SDSS_photometry["e_zmag"] for i in obj_list],
-            "SDSS_phot_method": [self.objects[i].SDSS_photometry["method"] for i in obj_list],
+            "SDSS_angDist": [self.objects[i].SDSS_photometry["angDist"] for i in obj_list],
+            "SDSS_phot_comment": [self.objects[i].SDSS_photometry["comment"] for i in obj_list],
             "UKIDSS_Y": [self.objects[i].UKIDSS_photometry["Ymag"] for i in obj_list],
             "err_UKIDSS_Y": [self.objects[i].UKIDSS_photometry["e_Ymag"] for i in obj_list],
             "UKIDSS_J": [self.objects[i].UKIDSS_photometry["Jmag"] for i in obj_list],
@@ -564,7 +548,8 @@ class SNAQS():
             "err_UKIDSS_H": [self.objects[i].UKIDSS_photometry["e_Hmag"] for i in obj_list],
             "UKIDSS_K": [self.objects[i].UKIDSS_photometry["Kmag"] for i in obj_list],
             "err_UKIDSS_K": [self.objects[i].UKIDSS_photometry["e_Kmag"] for i in obj_list],
-            "UKIDSS_phot_method": [self.objects[i].UKIDSS_photometry["method"] for i in obj_list],
+            "UKIDSS_angDist": [self.objects[i].UKIDSS_photometry["angDist"] for i in obj_list],
+            "UKIDSS_phot_comment": [self.objects[i].UKIDSS_photometry["comment"] for i in obj_list],
             "WISE_W1": [self.objects[i].WISE_photometry["W1mag"] for i in obj_list],
             "err_WISE_W1": [self.objects[i].WISE_photometry["e_W1mag"] for i in obj_list],
             "WISE_W2": [self.objects[i].WISE_photometry["W2mag"] for i in obj_list],
@@ -573,7 +558,8 @@ class SNAQS():
             "err_WISE_W3": [self.objects[i].WISE_photometry["e_W3mag"] for i in obj_list],
             "WISE_W4": [self.objects[i].WISE_photometry["W4mag"] for i in obj_list],
             "err_WISE_W4": [self.objects[i].WISE_photometry["e_W4mag"] for i in obj_list],
-            "WISE_phot_method": [self.objects[i].WISE_photometry["method"] for i in obj_list]
+            "WISE_angDist": [self.objects[i].WISE_photometry["angDist"] for i in obj_list],
+            "WISE_phot_comment": [self.objects[i].WISE_photometry["comment"] for i in obj_list]
             }
         export_df = pd.DataFrame(export_data)
         return export_df
