@@ -1,0 +1,337 @@
+name: QXP-Z
+
+description: Redshift solutions derived from the L1 spectra by the 4MOST extragalactic
+  pipeline (4XP)
+
+creators:
+  - first-name: J.-K.
+    last-name: Krogager
+  - first-name: L.
+    last-name: Davies
+
+
+object_classes:
+  types: &types
+    STAR:
+    QSO:
+    GALAXY:
+
+  subtypes: &subtypes
+    STAR-B:
+    STAR-A:
+    STAR-F:
+    STAR-G:
+    STAR-K:
+    STAR-M:
+    STAR-WD:
+    STAR-CV:
+    QSO:
+    QSO-MIDZ:
+    QSO-LOWZ:
+    QSO-GAL:
+    GALAXY:
+    GALAXY-PASS:
+
+
+header:
+  - name: PROCSOFT
+    datatype: str
+    description: Software version number
+    regexp: 'XPCA/[\w\.-]+\+[\w-]{2,8}'
+    origin: updated by QXP manager
+
+
+columns:
+- name: OBJECT
+  datatype: str
+  maxlength: 25
+  description: IAU-approved object name
+  regexp: 4MOST J[0-9]{8}\+[0-9]{7}(_T[1-9])?
+  ucd: meta.id;meta.main
+
+- name: OBJ_UID
+  datatype: int64
+  description: Unique 4MOST Object Identifier
+  ucd: meta.id
+
+- name: SPECUID
+  datatype: int64
+  description: 4MOST unique spectrum identifier
+  ucd: meta.id
+
+- name: PSPECUID1
+  datatype: int64
+  description: 4MOST L1 input spectrum identifier (RED or JOIN)
+  ucd: meta.id
+
+- name: PSPECUID2
+  datatype: int64
+  description: 4MOST L1 input spectrum identifier (GREEN)
+  ucd: meta.id
+  maybenull: true
+
+- name: PSPECUID3
+  datatype: int64
+  description: 4MOST L1 input spectrum identifier (BLUE)
+  ucd: meta.id
+  maybenull: true
+
+- name: STK_LEV
+  datatype: int16
+  description: L1 stack level, 1=single, 3=nightly, 4=superstack
+  ucd: meta.id
+
+- name: MJD_OBS
+  datatype: float
+  description: Start of (earliest) observation
+  ucd: time.epoch;time.start;meta.main
+  unit: d
+
+- name: RA
+  datatype: float
+  description: Right ascension (J2000)
+  unit: deg
+  ucd: pos.eq.ra;meta.main
+
+- name: DECL
+  datatype: float
+  description: Declination (J2000)
+  unit: deg
+  ucd: pos.eq.dec;meta.main
+
+- name: PROV
+  datatype: str
+  description: Filenames of the L1 spectra used for this row
+  ucd: meta.ref;meta.file
+  datalink:
+    type: ORIGFILE
+  maxlength: 68
+  arraysize: 3
+
+- name: zBest
+  datatype: double
+  description: Best fit heliocentric redshift
+  ucd: src.redshift
+  range:
+    min: -0.05
+    max: 6.8
+
+- name: zBestErr
+  datatype: double
+  description: Error on best fit heliocentric redshift from Chi2
+  ucd: stat.error;src.redshift
+
+- name: zBestCCSig
+  datatype: float
+  description: Significance of best-fit cross-correlation peak
+  ucd: stat.correlation
+
+- name: zBestChi2
+  datatype: float
+  description: Chi^2 of the best fit
+  ucd: stat.fit.chi2;meta.modelled
+
+- name: zBestDChi
+  datatype: float
+  description: Significance of the Chi^2 for best fit redshift
+  ucd: stat.fit.goodness
+
+- name: zBestFOM
+  datatype: float
+  description: Figure of Merit (ranking of Chi2 and Dchi)
+  ucd: stat.rank
+
+- name: zBestProb
+  datatype: float
+  description: Probability of correct redshift
+  ucd: stat.probability
+
+- name: zBestType
+  datatype: str
+  maxlength: 6
+  description: Best-fit object type
+  ucd: meta.code.class;src.class
+  values: *types
+
+- name: zBestSubType
+  datatype: str
+  maxlength: 11
+  description: Best-fit object subtype
+  ucd: meta.code.class;src.class
+  values: *subtypes
+
+- name: zBestPars
+  datatype: float
+  arraysize: 11
+  description: Coefficients of the best PCA fit
+  ucd: stat.param
+
+- name: zBestNfree
+  datatype: int16
+  description: Number of degrees of freedom in the PCA fit
+  ucd: stat.fit.dof
+
+- name: zBestWarn
+  datatype: int16
+  description: Warning flags (BIT-MASK, 0=good)
+  ucd: meta.code.error
+
+- name: zPrior
+  datatype: float
+  description: Value of photo-z prior at best-fit value
+  ucd: stat.likelihood
+
+- name: zAlt
+  datatype: float
+  arraysize: 4
+  description: Alternative heliocentric redshift solutions
+  ucd: src.redshift
+  range:
+    min: -0.01
+    max: 6.8
+
+- name: zAltErr
+  datatype: float
+  arraysize: 4
+  description: Error on alternative heliocentric redshifts
+  ucd: stat.error;src.redshift
+
+- name: zAltCCSig
+  datatype: float
+  arraysize: 4
+  description: Significance of alt. cross-correlation peaks
+  ucd: stat.correlation
+
+- name: zAltChi2
+  datatype: float
+  arraysize: 4
+  description: Chi-squared of the alternative solutions
+  ucd: stat.fit.chi2;meta.modelled
+
+- name: zAltDChi
+  datatype: float
+  arraysize: 4
+  description: Significance of Chi^2 for alternative solutions
+  ucd: stat.fit.goodness
+
+- name: zAltFOM
+  datatype: float
+  arraysize: 4
+  description: Figure of Merit (ranking of Chi2 and Dchi)
+  ucd: stat.rank
+
+- name: zAltProb
+  datatype: float
+  arraysize: 4
+  description: Redshift probability for alternative solutions
+  ucd: stat.probability
+
+- name: zAltType
+  datatype: str
+  arraysize: 4
+  maxlength: 6
+  description: Object Types for alternative solutions
+  ucd: meta.code.class;src.class
+  values: *types
+
+- name: zAltSubType
+  datatype: str
+  arraysize: 4
+  maxlength: 11
+  description: Object Subtype for alternative solutions
+  ucd: meta.code.class;src.class
+  values: *subtypes
+
+- name: zAltNfree
+  datatype: int16
+  arraysize: 4
+  description: Number of degrees of freedom in the PCA fit
+  ucd: stat.fit.dof
+
+- name: zAltWarn
+  datatype: int16
+  arraysize: 4
+  description: Warning flags (BIT-MASK, 0=good)
+  ucd: meta.code.error
+
+- name: z_PZ
+  datatype: float
+  description: Best fit redshift with photo-z prior
+  maybenull: true
+  ucd: src.redshift
+
+- name: zErr_PZ
+  datatype: float
+  description: Error on redshift with photo-z prior
+  maybenull: true
+  ucd: stat.error;src.redshift
+
+- name: zCCSig_PZ
+  datatype: float
+  description: Significance of cross-correlation peak
+  maybenull: true
+  ucd: stat.correlation
+
+- name: zChi2_PZ
+  datatype: float
+  description: Chi^2 of photo-z weighted fit
+  maybenull: true
+  ucd: stat.fit.chi2;meta.modelled
+
+- name: zDChi_PZ
+  datatype: float
+  description: Significance of Chi^2 for photo-z weighted fit
+  maybenull: true
+  ucd: stat.fit.goodness
+
+- name: zFOM_PZ
+  datatype: float
+  description: Figure of Merit weighted by photo-z
+  maybenull: true
+  ucd: stat.rank
+
+- name: zProb_PZ
+  datatype: float
+  description: Redshift probability for photo-z weighted fit
+  maybenull: true
+  ucd: stat.probability
+
+- name: zType_PZ
+  datatype: str
+  maxlength: 6
+  description: Object type for z_PZ
+  ucd: meta.code.class;src.class
+  maybenull: true
+  values: *types
+
+- name: zSubType_PZ
+  datatype: str
+  maxlength: 11
+  description: Object subtype for z_PZ
+  ucd: meta.code.class;src.class
+  maybenull: true
+  values: *subtypes
+
+- name: zPars_PZ
+  datatype: float
+  arraysize: 11
+  description: Coefficients of photo-z weighted PCA fit
+  maybenull: true
+  ucd: stat.param
+
+- name: zNfree_PZ
+  datatype: int16
+  description: Number of degrees of freedom in the PCA fit
+  maybenull: true
+  ucd: stat.fit.dof
+
+- name: zWarn_PZ
+  datatype: int16
+  description: Warning flags for photo-z weighted fit
+  maybenull: true
+  ucd: meta.code.error
+
+- name: SNR
+  datatype: float
+  description: Median signal-to-noise ratio per pixel
+  ucd: stat.snr

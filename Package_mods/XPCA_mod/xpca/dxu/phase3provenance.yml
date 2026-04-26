@@ -1,0 +1,26 @@
+name: PHASE3PROVENANCE
+
+description: Specification of the Provenance Table of the 4MOST extragalactic pipeline
+  (4XP)
+
+creators:
+  - first-name: J.-K.
+    last-name: Krogager
+
+columns:
+- name: PROV
+  description: ESO Phase3 filename
+  datatype: str
+  maxlength: 61
+  ucd: meta.id;meta.file
+
+- name: OBJ_UID
+  description: Unique 4MOST Object Identifier
+  datatype: int64
+  ucd: meta.id
+
+- name: SPECUID
+  description: Unique 4MOST Spectrum ID
+  datatype: int64
+  ucd: meta.id;meta.main
+
