@@ -28,13 +28,18 @@ from astropy.coordinates import SkyCoord
 
 class SNAQS_object():
     
-    def __init__(self, path, filename, sdss_df, WISE_df, ukidss_df, gaia_df, survey_df, constrain_wave=[3800, 8000], wave_points=5000, assign_photometries=True, maxAngDist=1/3600):
+    def __init__(self, path, filename, sdss_df, WISE_df, ukidss_df, gaia_df, survey_df, constrain_wave=[3800, 8000], wave_points=5000, assign_photometries=True, maxAngDist=1/3600, maxAngDist_lowprec=15/3600):
         self.filename = filename
         self.ukidss_df = ukidss_df
         self.WISE_df = WISE_df
         self.sdss_df = sdss_df
         self.GAIA_df = gaia_df
         self.survey_df = survey_df
+        if self.filename[-3:]=="dat":
+            self.angDist_limit = maxAngDist_lowprec
+        else:
+            self.angDist_limit = maxAngDist
+        
         self.angDist_limit = maxAngDist
         
         if self.filename[-4:]=="fits":

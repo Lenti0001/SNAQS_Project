@@ -41,7 +41,7 @@ import warnings
 
 class SNAQS():
     
-    def __init__(self, path, RA_range=[190, 210], DEC_range=[22, 36], sdss_file="sdss.csv", ukidss_file="ukidss.csv", WISE_file="WISE.csv", gaia_file="GAIA.csv", webui=False, assign_photometries=True, reduced_mem=False, maxAngDist=15/3600):
+    def __init__(self, path, RA_range=[190, 210], DEC_range=[22, 36], sdss_file="sdss.csv", ukidss_file="ukidss.csv", WISE_file="WISE.csv", gaia_file="GAIA.csv", webui=False, assign_photometries=True, reduced_mem=False, maxAngDist=1/3600):
         self.webui = webui
         if self.webui==True:
             self.progress_text = None
